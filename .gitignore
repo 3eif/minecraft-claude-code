@@ -1,0 +1,4 @@
+.DS_Store
+*.js
+!hooks/*.js
+node_modules/

@@ -1,0 +1,519 @@
+// MCOverlay: full-screen overlay that plays one Minecraft moment, or shows one
+// screen (screens.swift) until it is closed, and quits.
+//
+//   MCOverlay <assetsDir> totem [volume]
+//   MCOverlay <assetsDir> advancement <task|goal|challenge> <title> <itemIcon> [description]
+//   MCOverlay <assetsDir> death <title> <cause> <score> <buttonLabel>
+//
+// Timings follow Minecraft 1.21: GameRenderer.renderItemActivationAnimation (totem),
+// AdvancementToast and ToastManager (toast). The game runs at 20 ticks a second.
+
+import AppKit
+import AVFoundation
+
+let args = CommandLine.arguments
+guard args.count >= 3 else {
+    FileHandle.standardError.write("usage: MCOverlay <assetsDir> totem | advancement <type> <title> <icon>\n".data(using: .utf8)!)
+    exit(2)
+}
+let assets = URL(fileURLWithPath: args[1])
+let mode = args[2]
+
+// MARK: assets
+
+func loadImage(_ path: String) -> CGImage? {
+    guard let src = CGImageSourceCreateWithURL(assets.appendingPathComponent(path) as CFURL, nil) else { return nil }
+    return CGImageSourceCreateImageAtIndex(src, 0, nil)
+}
+
+var players: [AVAudioPlayer] = []
+/// MC_VOLUME scales every sound; 0 mutes. MC_MUTED names the kinds of sound
+/// turned off in Music & Sounds, comma-separated.
+var masterVolume = Float(ProcessInfo.processInfo.environment["MC_VOLUME"] ?? "") ?? 1
+var mutedKinds = Set((ProcessInfo.processInfo.environment["MC_MUTED"] ?? "").split(separator: ",").map(String.init))
+func soundKind(_ name: String) -> String {
+    if name.hasPrefix("hit") { return "damage" }
+    if name.hasPrefix("eat") || name == "burp" { return "eating" }
+    if name == "orb" { return "orbs" }
+    if name == "levelup" { return "xp" }
+    if name.hasPrefix("toast") || name == "challenge_complete" { return "advancements" }
+    if name == "use_totem" { return "totem" }
+    if name.hasPrefix("villager") { return "villager" }
+    if name.hasPrefix("enchant") { return "enchant" }
+    if name.hasPrefix("brew") || name == "bottle" { return "brewing" }
+    return name == "click" ? "clicks" : name
+}
+func playSound(_ name: String, volume: Float = 1) {
+    guard masterVolume > 0, !mutedKinds.contains(soundKind(name)) else { return }
+    playRaw(name, volume * masterVolume)
+}
+/// Plays a sound at exactly this volume. Each file is read once; the server keeps them all.
+var soundData: [String: Data] = [:]
+func playRaw(_ name: String, _ volume: Float) {
+    if soundData[name] == nil { soundData[name] = try? Data(contentsOf: assets.appendingPathComponent("sounds/\(name).wav")) }
+    guard let data = soundData[name], let p = try? AVAudioPlayer(data: data) else { return }
+    p.volume = volume
+    p.play()
+    players.removeAll { !$0.isPlaying }
+    players.append(p)
+}
+
+func bitmap(_ w: Int, _ h: Int) -> CGContext {
+    CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0,
+              space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+}
+
+/// Multiplies an image by a color, keeping its alpha (how Minecraft tints particles and text).
+func tint(_ img: CGImage, _ r: CGFloat, _ g: CGFloat, _ b: CGFloat) -> CGImage {
+    let ctx = bitmap(img.width, img.height)
+    let rect = CGRect(x: 0, y: 0, width: img.width, height: img.height)
+    ctx.draw(img, in: rect)
+    ctx.setBlendMode(.multiply)
+    ctx.setFillColor(red: r, green: g, blue: b, alpha: 1)
+    ctx.fill(rect)
+    ctx.setBlendMode(.destinationIn)
+    ctx.draw(img, in: rect)
+    return ctx.makeImage()!
+}
+
+/// Draws an image into a y-down context without flipping it.
+func blit(_ ctx: CGContext, _ img: CGImage, _ rect: CGRect) {
+    ctx.saveGState()
+    ctx.translateBy(x: rect.minX, y: rect.maxY)
+    ctx.scaleBy(x: 1, y: -1)
+    ctx.draw(img, in: CGRect(x: 0, y: 0, width: rect.width, height: rect.height))
+    ctx.restoreGState()
+}
+
+// MARK: Minecraft's default font (ascii.png, 16x16 cells of 8x8)
+
+final class MCFont {
+    let sheet: CGImage
+    var widths = [Int](repeating: 0, count: 256)
+    var tinted: [String: CGImage] = [:]
+
+    init(_ img: CGImage) {
+        sheet = img
+        let w = img.width, h = img.height, cell = w / 16
+        let ctx = bitmap(w, h)
+        ctx.draw(img, in: CGRect(x: 0, y: 0, width: w, height: h))
+        let data = ctx.data!.assumingMemoryBound(to: UInt8.self), stride = ctx.bytesPerRow
+        for ch in 0..<256 {
+            let gx = (ch % 16) * cell, gy = (ch / 16) * cell
+            var width = 0
+            outer: for col in Swift.stride(from: cell - 1, through: 0, by: -1) {
+                for row in 0..<cell where data[(gy + row) * stride + (gx + col) * 4 + 3] > 0 { width = col + 1; break outer }
+            }
+            widths[ch] = width
+        }
+    }
+
+    func advance(_ c: Character) -> Int {
+        if c == " " { return 4 }
+        guard let a = c.asciiValue else { return 6 }
+        return widths[Int(a)] + 1
+    }
+
+    func width(_ s: String) -> Int { s.reduce(0) { $0 + advance($1) } }
+
+    func draw(_ s: String, x: CGFloat, y: CGFloat, rgb: UInt32, in ctx: CGContext) {
+        let key = String(rgb, radix: 16)
+        let sh = tinted[key] ?? {
+            let t = tint(sheet, CGFloat((rgb >> 16) & 255) / 255, CGFloat((rgb >> 8) & 255) / 255, CGFloat(rgb & 255) / 255)
+            tinted[key] = t
+            return t
+        }()
+        var cx = x
+        for c in s {
+            if c != " ", let a = c.asciiValue, let g = sh.cropping(to: CGRect(x: Int(a) % 16 * 8, y: Int(a) / 16 * 8, width: 8, height: 8)) {
+                blit(ctx, g, CGRect(x: cx, y: y, width: 8, height: 8))
+            }
+            cx += CGFloat(advance(c))
+        }
+    }
+}
+
+// MARK: scenes
+
+protocol Scene {
+    var finished: Bool { get }
+    func draw(_ ctx: CGContext, t: Double, w: CGFloat, h: CGFloat)   // t in seconds, w/h in GUI pixels
+}
+
+/// GameRenderer.renderItemActivationAnimation, flattened from 3D to 2D, plus the
+/// first-person burst of totem particles (a 2D approximation).
+final class TotemScene: Scene {
+    let item = loadImage("totem_of_undying.png")!
+    let offX = Double.random(in: -1...1), offY = Double.random(in: -1...1)
+    var glitter: [[CGImage]] = []                   // [color][frame]
+    struct P { var x, y, vx, vy: Double; var age = 0; let life: Int; let color: Int; let size: Double }
+    var particles: [P] = []
+    var lastTick = -1
+    var finished = false
+
+    init(volume: Float) {
+        let frames = (0..<8).compactMap { loadImage("particle/glitter_\($0).png") }
+        // TotemParticle colors: 1 in 4 yellow, the rest green.
+        for k in 0..<12 {
+            let r = Double.random(in: 0..<1)
+            let rgb: (Double, Double, Double) = k < 3 ? (0.6 + r * 0.2, 0.6 + r * 0.3, r * 0.2) : (0.1 + r * 0.2, 0.4 + r * 0.3, r * 0.2)
+            glitter.append(frames.map { tint($0, rgb.0, rgb.1, rgb.2) })
+        }
+        playSound("use_totem", volume: volume)
+    }
+
+    func tick(_ n: Int, w: Double, h: Double) {
+        // TrackingEmitter: 30 ticks, 16 particles a tick.
+        if n < 30 {
+            for _ in 0..<16 {
+                let a = Double.random(in: 0..<(2 * .pi)), sp = Double.random(in: 8...30)
+                particles.append(P(x: w / 2 + cos(a) * w * Double.random(in: 0.05...0.32),
+                                   y: h / 2 + sin(a) * h * Double.random(in: 0.05...0.32),
+                                   vx: cos(a) * sp, vy: sin(a) * sp - 6,
+                                   life: 60 + Int.random(in: 0..<12),
+                                   color: Int.random(in: 0..<4) == 0 ? Int.random(in: 0..<3) : Int.random(in: 3..<12),
+                                   size: Double.random(in: 5...12)))
+            }
+        }
+        for i in particles.indices {
+            particles[i].x += particles[i].vx; particles[i].y += particles[i].vy
+            particles[i].vx *= 0.6; particles[i].vy = particles[i].vy * 0.6 + 1.25 * 0.4
+            particles[i].age += 1
+        }
+        particles.removeAll { $0.age >= $0.life }
+    }
+
+    func draw(_ ctx: CGContext, t: Double, w: CGFloat, h: CGFloat) {
+        let ticks = t * 20
+        let n = Int(ticks)
+        while lastTick < n { lastTick += 1; tick(lastTick, w: Double(w), h: Double(h)) }
+
+        for p in particles {
+            let frame = min(7, p.age * 7 / max(1, p.life))
+            var alpha = 1.0
+            if p.age > p.life / 2 { alpha = 1 - Double(p.age - p.life / 2) / Double(p.life) }
+            ctx.setAlpha(alpha)
+            blit(ctx, glitter[p.color][frame], CGRect(x: p.x - p.size / 2, y: p.y - p.size / 2, width: p.size, height: p.size))
+        }
+        ctx.setAlpha(1)
+
+        if ticks < 40 {
+            let f = ticks / 40, f1 = f * f, f2 = f * f1
+            let f3 = 10.25 * f2 * f1 - 24.95 * f1 * f1 + 25.5 * f2 - 13.8 * f1 + 4.0 * f
+            let f4 = f3 * .pi
+            let s2 = abs(sin(f4 * 2))
+            let x = Double(Int(w) / 2) + offX * Double(Int(w) / 4) * s2
+            let y = Double(Int(h) / 2) + offY * Double(Int(h) / 4) * s2
+            let size = 50 + 175 * sin(f4)
+            let yRot = 900 * abs(sin(f4)) * .pi / 180
+            let wobble = 6 * cos(f * 8) * .pi / 180
+            ctx.saveGState()
+            ctx.translateBy(x: x, y: y)
+            ctx.scaleBy(x: size, y: size)
+            ctx.scaleBy(x: cos(yRot), y: cos(wobble))      // Y then X rotation, seen head-on
+            ctx.rotate(by: -wobble)                         // Z rotation
+            blit(ctx, item, CGRect(x: -0.5, y: -0.5, width: 1, height: 1))
+            ctx.restoreGState()
+        }
+        finished = ticks >= 40 && particles.isEmpty && lastTick >= 30
+    }
+}
+
+/// Where the helper keeps what its processes share: toast slots, the music player's state.
+let cacheDir: URL = {
+    let dir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("minecraft-hud")
+    try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    return dir
+}()
+
+/// AdvancementToast inside ToastManager: slides in over 600 ms (eased f²), holds 5 s, slides out.
+/// As in the game, up to five show at once, stacked down the right edge. Each
+/// toast is its own process, so a slot is a lock file: the first free one from
+/// the top is taken and held until the toast has left.
+final class ToastScene: Scene {
+    static let pitch: CGFloat = 62
+    let font = MCFont(loadImage("ascii.png")!)
+    let icon: CGImage?
+    let heading: String, color: UInt32, title: String, type: String
+    var tutorial: Bool { type == "tip" }
+    let lines: [String]
+    let top: CGFloat
+    var slot = 0
+    var lock: Int32 = -1
+    var began: Double? = nil
+    var hidden = false
+    var finished = false
+
+    init(type: String, title: String, iconName: String, desc: String, top: CGFloat) {
+        icon = loadImage("item/\(iconName).png")
+        switch type {
+        case "tip": heading = clean(title); color = 0x500050
+        case "challenge": heading = "Challenge Complete!"; color = 0xFF88FF
+        case "goal": heading = "Goal Reached!"; color = 0xFFFF00
+        default: heading = "Advancement Made!"; color = 0xFFFF00
+        }
+        self.title = clean(title)
+        self.type = type
+        self.top = top
+        // Up to three lines; a long description widens the toast rather than being cut.
+        lines = Array(wrap(clean(desc), max(124, font.width(clean(title)), font.width(clean(desc)) / (type == "tip" ? 2 : 3) + 12)).prefix(3))
+    }
+
+    deinit { if lock >= 0 { close(lock) } }
+
+    /// Takes the first free slot; false while all five are showing.
+    func claim() -> Bool {
+        for i in 0..<5 {
+            let fd = open(cacheDir.appendingPathComponent("toast-\(i).lock").path, O_CREAT | O_RDWR, 0o644)
+            if fd >= 0, flock(fd, LOCK_EX | LOCK_NB) == 0 { slot = i; lock = fd; return true }
+            if fd >= 0 { close(fd) }
+        }
+        return false
+    }
+
+    func draw(_ ctx: CGContext, t: Double, w: CGFloat, h: CGFloat) {
+        if began == nil {
+            guard claim() else { finished = t > 60; return }
+            began = t
+            playSound("toast_in")
+            if type == "challenge" { playSound("challenge_complete") }
+            if tutorial { hidden = false }
+        }
+        let ms = (t - began!) * 1000
+        var vis: Double
+        if ms < 5000 { let f = min(1, ms / 600); vis = f * f }
+        else {
+            if !hidden { hidden = true; playSound("toast_out") }
+            let f = min(1, (ms - 5000) / 600); vis = 1 - f * f
+        }
+        if tutorial {
+            // TutorialToast: a light frame, the title in purple, the text in black, one line lower.
+            let high = CGFloat(max(32, 18 + lines.count * 9 + 6))
+            let wide = CGFloat(max(160, 30 + max(font.width(heading), lines.map { font.width($0) }.max() ?? 0) + 8))
+            let x = w - wide * vis, y = top + CGFloat(slot) * ToastScene.pitch
+            nine(ctx, "gui/sprites/toast/tutorial.png", CGRect(x: x, y: y, width: wide, height: high), 4)
+            if let icon { blit(ctx, icon, CGRect(x: x + 8, y: y + 8, width: 16, height: 16)) }
+            font.draw(heading, x: x + 30, y: y + 7, rgb: color, in: ctx)
+            for (i, line) in lines.enumerated() { font.draw(line, x: x + 30, y: y + 18 + CGFloat(i * 9), rgb: 0x000000, in: ctx) }
+            finished = ms >= 5600
+            return
+        }
+        let high = CGFloat(32 + (lines.isEmpty ? 0 : lines.count * 9 + 2))
+        // The game's toast is 160 wide; a longer title widens it rather than running off the edge.
+        let wide = CGFloat(max(160, 30 + max(font.width(title), font.width(heading), lines.map { font.width($0) }.max() ?? 0) + 8))
+        let x = w - wide * vis, y = top + CGFloat(slot) * ToastScene.pitch
+        nine(ctx, "toast_advancement.png", CGRect(x: x, y: y, width: wide, height: high), 4)
+        if let icon { blit(ctx, icon, CGRect(x: x + 8, y: y + 8, width: 16, height: 16)) }
+        font.draw(heading, x: x + 30, y: y + 7, rgb: color, in: ctx)
+        font.draw(title, x: x + 30, y: y + 18, rgb: 0xFFFFFF, in: ctx)
+        for (i, line) in lines.enumerated() { font.draw(line, x: x + 30, y: y + 30 + CGFloat(i * 9), rgb: 0xAAAAAA, in: ctx) }
+        finished = ms >= 5600
+    }
+}
+
+/// DeathScreen: the red gradient over everything, the title at double size,
+/// the cause, the score in yellow, and the two buttons. As in the game the
+/// buttons are disabled for the first second, then highlight under the pointer
+/// and click; either one closes the screen.
+var interactive = false
+var pointer: CGPoint? = nil        // in GUI pixels, set by the view
+var pressed: CGPoint? = nil
+
+final class DeathScene: Scene {
+    let font = MCFont(loadImage("ascii.png")!)
+    let idle = loadImage("button.png"), hot = loadImage("button_highlighted.png"), off = loadImage("button_disabled.png")
+    let title: String, cause: String, score: String, label: String
+    var closingAt: Double? = nil
+    var finished = false
+
+    init(title: String, cause: String, score: String, label: String) {
+        self.title = title; self.cause = cause; self.score = score; self.label = label
+    }
+
+    func shadowed(_ s: String, x: CGFloat, y: CGFloat, rgb: UInt32, in ctx: CGContext) {
+        let dark = ((rgb >> 16) & 255) / 4 << 16 | ((rgb >> 8) & 255) / 4 << 8 | (rgb & 255) / 4
+        font.draw(s, x: x + 1, y: y + 1, rgb: dark, in: ctx)
+        font.draw(s, x: x, y: y, rgb: rgb, in: ctx)
+    }
+
+    func centered(_ s: String, y: CGFloat, w: CGFloat, rgb: UInt32, in ctx: CGContext) {
+        shadowed(s, x: (w / 2).rounded(.down) - CGFloat(font.width(s) / 2), y: y, rgb: rgb, in: ctx)
+    }
+
+    func draw(_ ctx: CGContext, t: Double, w: CGFloat, h: CGFloat) {
+        // fillGradient(0x60500000, 0xA0803030), top to bottom
+        let colors = [CGColor(red: 0x50 / 255, green: 0, blue: 0, alpha: 0x60 / 255),
+                      CGColor(red: 0x80 / 255, green: 0x30 / 255, blue: 0x30 / 255, alpha: 0xA0 / 255)] as CFArray
+        if let g = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: colors, locations: [0, 1]) {
+            ctx.drawLinearGradient(g, start: .zero, end: CGPoint(x: 0, y: h), options: [])
+        }
+        ctx.saveGState()
+        ctx.scaleBy(x: 2, y: 2)
+        centered(title, y: 30, w: w / 2, rgb: 0xFFFFFF, in: ctx)
+        ctx.restoreGState()
+        centered(cause, y: 85, w: w, rgb: 0xFFFFFF, in: ctx)
+        let head = "Score: "
+        let x = (w / 2).rounded(.down) - CGFloat(font.width(head + score) / 2)
+        shadowed(head, x: x, y: 100, rgb: 0xFFFFFF, in: ctx)
+        shadowed(score, x: x + CGFloat(font.width(head)), y: 100, rgb: 0xFFFF55, in: ctx)
+
+        let active = t >= 1                      // 20 ticks
+        for (text, y) in [(label, (h / 4).rounded(.down) + 72), ("Title Screen", (h / 4).rounded(.down) + 96)] {
+            let box = CGRect(x: (w / 2).rounded(.down) - 100, y: y, width: 200, height: 20)
+            let over = active && pointer.map(box.contains) == true
+            if let img = !active ? off : over ? hot : idle { blit(ctx, img, box) }
+            centered(text, y: y + 6, w: w, rgb: active ? 0xFFFFFF : 0xA0A0A0, in: ctx)
+            if active, closingAt == nil, let p = pressed, box.contains(p) {
+                playSound("click", volume: 0.25)
+                closingAt = t
+                emit(["death": text == label ? "respawn" : "title"])
+            }
+        }
+        pressed = nil
+        // Leave a moment for the click to sound; never stay up past a minute.
+        finished = closingAt.map { t - $0 > 0.25 } ?? (t > 60)
+    }
+}
+
+// MARK: window
+
+final class OverlayView: NSView {
+    var scene: Scene!
+    var gui: CGFloat = 3
+    var start = CACurrentMediaTime()
+    override var isFlipped: Bool { true }
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+    func gui(_ event: NSEvent) -> CGPoint {
+        let p = convert(event.locationInWindow, from: nil)
+        return CGPoint(x: p.x / gui, y: p.y / gui)
+    }
+    override func mouseMoved(with event: NSEvent) { pointer = gui(event) }
+    override func mouseDragged(with event: NSEvent) { pointer = gui(event) }
+    override func mouseDown(with event: NSEvent) { pointer = gui(event); pressed = pointer; held = true }
+    override func mouseUp(with event: NSEvent) { pointer = gui(event); held = false; released = true }
+    override func scrollWheel(with event: NSEvent) { scrolled += event.scrollingDeltaY * (event.hasPreciseScrollingDeltas ? 1 : 10) }
+    override var acceptsFirstResponder: Bool { true }
+    override func keyDown(with event: NSEvent) {
+        // On the death screen Return, Space or Escape press Respawn; the other screens read the keys themselves.
+        if !(scene is DeathScene) { keys.append(event.keyCode); return }
+        if [36, 49, 53, 76].contains(event.keyCode) { pressed = CGPoint(x: bounds.width / gui / 2, y: (bounds.height / gui / 4).rounded(.down) + 82) }
+    }
+    override func updateTrackingAreas() {
+        trackingAreas.forEach(removeTrackingArea)
+        addTrackingArea(NSTrackingArea(rect: bounds, options: [.mouseMoved, .activeAlways, .inVisibleRect], owner: self))
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        guard let ctx = NSGraphicsContext.current?.cgContext else { return }
+        ctx.clear(bounds)
+        ctx.interpolationQuality = .none
+        ctx.setShouldAntialias(false)
+        ctx.saveGState()
+        ctx.scaleBy(x: gui, y: gui)
+        scene.draw(ctx, t: CACurrentMediaTime() - start, w: bounds.width / gui, h: bounds.height / gui)
+        ctx.restoreGState()
+    }
+}
+
+let app = NSApplication.shared
+app.setActivationPolicy(.accessory)
+
+let screen = NSScreen.main ?? NSScreen.screens[0]
+let frame = screen.frame
+/// Borderless windows refuse key status by default, and then swallow clicks.
+final class OverlayWindow: NSWindow {
+    override var canBecomeKey: Bool { true }
+}
+let window = overlayWindow()
+
+let view = OverlayView(frame: NSRect(origin: .zero, size: frame.size))
+view.gui = guiScale(frame)
+
+switch mode {
+case "totem", "advancement", "tip":
+    view.gui = momentGui(mode, view.gui)
+    guard let scene = momentScene(Array(args[2...]), gui: view.gui) else { exit(2) }
+    view.scene = scene
+case "player":
+    runPlayer(args.count > 3 ? args[3] : nil)
+case "music":
+    // One word for the player from outside: toggle, next, prev or stop.
+    tellPlayer(["cmd": args.count > 3 ? args[3] : "toggle"])
+    // Posting is asynchronous: give the notification a moment to leave.
+    RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+    exit(0)
+case "advancements", "enchant", "brew", "map", "options", "jukebox", "guide", "lectern", "death":
+    window.ignoresMouseEvents = false
+    window.acceptsMouseMovedEvents = true
+    interactive = true
+    view.scene = makeScreen(mode, args.count > 3 ? args[3] : "{}")
+    // Started cold: have the server ready for the next one.
+    if ProcessInfo.processInfo.environment["MC_SNAPSHOT"] == nil { startServer() }
+case "parrot-snapshot":
+    // MCOverlay <assets> parrot-snapshot <out.png> [dance]: the parrot drawn to a file.
+    let pet = ParrotPet(show: false)
+    let image = pet.snapshot(dancing: args.count > 4, at: 0.4)
+    if let tiff = image.tiffRepresentation, let rep = NSBitmapImageRep(data: tiff), let png = rep.representation(using: .png, properties: [:]) {
+        try? png.write(to: URL(fileURLWithPath: args[3]))
+    }
+    exit(0)
+case "serve":
+    startServer()
+    exit(0)
+case "serve-run":
+    window.ignoresMouseEvents = false
+    window.acceptsMouseMovedEvents = true
+    interactive = true
+    view.scene = IdleScene()
+default:
+    exit(2)
+}
+
+// MC_SNAPSHOT=<file.png> draws one frame to a file and quits, for checking a
+// screen without opening it. MC_POINTER="x,y" puts the pointer there, and
+// MC_CLICKS="x,y;x,y" clicks those points first, one frame each (GUI pixels).
+if let out = ProcessInfo.processInfo.environment["MC_SNAPSHOT"] {
+    let W = 1512, H = 982
+    let point = { (s: String) -> CGPoint? in
+        let n = s.split(separator: ",").compactMap { Double($0) }
+        return n.count == 2 ? CGPoint(x: n[0], y: n[1]) : nil
+    }
+    var frames: [(CGPoint?, Bool)] = (ProcessInfo.processInfo.environment["MC_CLICKS"] ?? "").split(separator: ";").map { (point(String($0)), true) }
+    frames.append((point(ProcessInfo.processInfo.environment["MC_POINTER"] ?? ""), false))
+    var shot: CGImage? = nil
+    for (n, (at, click)) in frames.enumerated() {
+        let ctx = bitmap(W, H)
+        ctx.interpolationQuality = .none
+        ctx.setShouldAntialias(false)
+        ctx.setFillColor(red: 0.35, green: 0.45, blue: 0.4, alpha: 1)
+        ctx.fill(CGRect(x: 0, y: 0, width: W, height: H))
+        ctx.translateBy(x: 0, y: CGFloat(H)); ctx.scaleBy(x: 1, y: -1)
+        ctx.scaleBy(x: view.gui, y: view.gui)
+        pointer = at ?? pointer
+        pressed = click ? at : nil
+        view.scene.draw(ctx, t: Double(n) * 0.05 + (Double(ProcessInfo.processInfo.environment["MC_T"] ?? "") ?? 2), w: CGFloat(W) / view.gui, h: CGFloat(H) / view.gui)
+        shot = ctx.makeImage()
+    }
+    if let shot, let dest = CGImageDestinationCreateWithURL(URL(fileURLWithPath: out) as CFURL, "public.png" as CFString, 1, nil) {
+        CGImageDestinationAddImage(dest, shot, nil)
+        CGImageDestinationFinalize(dest)
+    }
+    exit(0)
+}
+
+window.contentView = view
+if mode == "serve-run" {
+    let server = Server()
+    server.start()
+    withExtendedLifetime(server) { app.run() }
+    exit(0)
+}
+if interactive {
+    app.activate(ignoringOtherApps: true)
+    window.makeKeyAndOrderFront(nil)
+    window.makeFirstResponder(view)
+} else {
+    window.orderFrontRegardless()
+}
+startFrames { app.terminate(nil) }
+app.run()

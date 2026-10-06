@@ -1,0 +1,14 @@
+{
+  "name": "minecraft-hud",
+  "description": "Minecraft's survival HUD, screens and a desktop parrot for Claude Code",
+  "owner": {
+    "name": "Seif Abdelaziz"
+  },
+  "plugins": [
+    {
+      "name": "minecraft-hud",
+      "source": "./",
+      "description": "Minecraft's survival HUD for Claude Code: hearts for your usage limit, hunger for the context window, XP for tokens"
+    }
+  ]
+}
