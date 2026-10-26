@@ -66,12 +66,13 @@ Everything is under `/minecraft`:
 | `/minecraft volume 50`, `mute`, `unmute` | Sound |
 | `/minecraft fullscreen on\|off`, `hotbar on\|off` | Turn the full-screen moments or the hotbar off. `/minecraft hotbar on` brings a hidden hotbar back. |
 | `/minecraft clear` | Reset your XP. Advancements are kept. |
+| `/minecraft reset all confirm` | Start over: every advancement, your XP and the backup. Settings are kept. |
 
 ## Privacy
 
 Everything stays on your Mac. The mod reads your usage figures and the current chat from Claude Code, and sends nothing anywhere.
 
-What it keeps (XP, advancements, settings, the parrot's spot) lives in Claude Code's plugin storage and `~/Library/Caches/minecraft-hud`, shared by every open chat: a setting changed in one shows in the others within a few seconds.
+What it keeps (XP, advancements, settings, the parrot's spot) lives in Claude Code's plugin storage and `~/Library/Caches/minecraft-hud`, shared by every open chat: a setting changed in one shows in the others within a few seconds. Your progress is also copied, daily and whenever you earn an advancement, to `~/Library/Application Support/minecraft-hud/backup.json`, and comes back from there if a reinstall starts the mod with nothing.
 
 ## Uninstall
 

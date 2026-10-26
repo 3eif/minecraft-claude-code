@@ -321,6 +321,45 @@ async function storedProgress($: EngineInterface) {
   return { ...now, earned }
 }
 
+// ---------- the backup ----------
+// The store belongs to one install of the mod, from one marketplace: installed
+// from another, or uninstalled, it starts over. So the record is copied, once a
+// day and whenever an advancement is earned, to a folder of its own that any
+// install finds, and taken back when a chat starts with nothing in the store.
+const KEPT = [PROGRESS, 'xp2', 'prefs', 'guided', 'treeSeenAt', 'lastPromptAt', 'cameBack']
+async function backupFile($: EngineInterface) {
+  const home = (await $.env.get('HOME')) ?? ''
+  return home ? `${home}/Library/Application Support/minecraft-hud/backup.json` : ''
+}
+
+async function backUp($: EngineInterface, now: number) {
+  const file = await backupFile($)
+  if (!file) return
+  const data: Record<string, unknown> = {}
+  for (const key of KEPT) {
+    const value = await $.store.get(key)
+    if (value !== undefined) data[key] = value
+  }
+  for (const key of await $.store.keys()) if (key.startsWith('tip:')) data[key] = await $.store.get(key)
+  await $.process.run(['/bin/mkdir', '-p', file.slice(0, file.lastIndexOf('/'))], { timeoutMs: 5000 }).catch(() => undefined)
+  await $.fs.write(file, JSON.stringify({ at: now, data })).catch(() => undefined)
+  await $.store.set('backupAt', now)
+}
+
+/** Takes the backup back into an empty store. Says what it brought back, or nothing. */
+async function restore($: EngineInterface) {
+  const held = ((await $.store.get('xp2')) as { units?: number } | undefined)?.units ?? 0
+  if ((await $.store.get(PROGRESS)) || (await $.store.get('progress')) || held > 0) return ''
+  const file = await backupFile($)
+  const said = file ? await $.fs.read(file).catch(() => '') : ''
+  const backup = (said ? JSON.parse(said) : {}) as { data?: Record<string, unknown> }
+  const progress = backup.data?.[PROGRESS] as Progress | undefined
+  if (!progress || !Object.keys(progress.earned ?? {}).length) return ''
+  for (const [key, value] of Object.entries(backup.data ?? {})) await $.store.set(key, value)
+  const units = (backup.data?.xp2 as { units?: number } | undefined)?.units ?? 0
+  return `Progress restored from your backup: ${Object.keys(progress.earned).length} advancements, level ${levelOf(units).level}.`
+}
+
 // Counts are saved a few seconds after they change, in one write, instead of at
 // every event: the store's lock costs two small processes. An advancement just
 // earned is saved at once, so its toast is not late, and a chat that ends saves
@@ -400,6 +439,8 @@ async function settle($: EngineInterface) {
     later($, 3000, () => settleSoon($))
     return
   }
+  const now = await $.clock.now()
+  if (fresh.length || now - Number((await $.store.get('backupAt')) ?? 0) > 86_400_000) void backUp($, now).catch(() => undefined)
   // A tab's first advancement only opens the tab: it is earned without a toast.
   // The rest show as the game shows them, stacked down the corner, each a beat
   // after the one above so their sounds do not land together.
@@ -1216,7 +1257,7 @@ function open($: EngineInterface, id: string) {
 }
 
 const DEMOS = ['damage', 'low', 'apple', 'starve', 'death', 'reset', 'totem', 'advancement', 'xp', 'villager', 'hardcore', 'hunger', 'live', 'debug']
-const SCREENS = ['help', 'parrot', 'advancements', 'music', 'settings', 'clear']
+const SCREENS = ['help', 'parrot', 'advancements', 'music', 'settings', 'clear', 'reset all']
 
 export const register: Register = (on, options) => {
   const chosen = options as { sounds?: boolean; volume?: string; fullscreen?: boolean }
@@ -1237,6 +1278,8 @@ export const register: Register = (on, options) => {
     })
     startServer($)
     chat = await $.session.id()
+    const restored = await restore($).catch(() => '')
+    if (restored) later($, 4000, () => $.ui.toast(restored))
     chatTurns = Number((await $.store.get(`replies:${chat}`)) ?? 0)
     saved = merge(await storedProgress($), blank())
     const held = (await $.store.get('xp2')) as { units?: number } | undefined
@@ -1510,6 +1553,24 @@ export const register: Register = (on, options) => {
       await clearXP($)
       return { text: 'Your level is back to 0. Advancements are kept.' }
     }
+    // A fresh start: every advancement, the XP and the backup. Asked twice.
+    if (word === 'reset' && value === 'all') {
+      if (typed.split(/\s+/)[2] !== 'confirm') {
+        return { text: 'This erases every advancement, your XP and level, and the backup of them. Settings are kept. To do it, type /minecraft reset all confirm.' }
+      }
+      for (const key of await $.store.keys()) {
+        if (key !== 'prefs' && !key.startsWith('tip:') && key !== 'guided') await $.store.delete(key)
+      }
+      const file = await backupFile($)
+      if (file) await $.fs.write(file, JSON.stringify({ at: await $.clock.now(), data: {} })).catch(() => undefined)
+      saved = blank()
+      mine = blank()
+      pending = []
+      xpTotal = 0
+      s.xpShown = 0
+      redraw($)
+      return { text: 'Everything is reset: no advancements, level 0, and an empty backup. Chats already open pick it up as they go.' }
+    }
     if (['mute', 'unmute', 'volume', 'fullscreen', 'hotbar'].includes(word ?? '')) {
       if (word === 'mute') sounds = false
       if (word === 'unmute') sounds = true
@@ -1543,7 +1604,7 @@ export const register: Register = (on, options) => {
     }
     const scene = typed === 'achievement' ? 'advancement' : typed
     const now = await $.clock.now()
-    if (!DEMOS.includes(scene)) return { text: `Moments: ${DEMOS.join(', ')}. Screens: help, advancements, music, parrot, settings. Music: music pause|next|prev|stop. Also: clear, mute, unmute, volume 0-100, fullscreen on|off, hotbar on|off.` }
+    if (!DEMOS.includes(scene)) return { text: `Moments: ${DEMOS.join(', ')}. Screens: help, advancements, music, parrot, settings. Music: music pause|next|prev|stop. Also: clear (XP only), reset all, mute, unmute, volume 0-100, fullscreen on|off, hotbar on|off.` }
     if (scene === 'debug') return { text: `${JSON.stringify(diag)} · ready ${s.ready} · demo ${s.demo} · hotbar ${hotbar} · band: ${JSON.stringify(seen)} · health ${s.health} · food ${s.food} · xp ${s.xpShown}` }
     if (scene === 'villager') {
       play($, pick(['villager1', 'villager2', 'villager3']))
