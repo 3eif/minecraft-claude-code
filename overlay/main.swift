@@ -229,12 +229,14 @@ let cacheDir: URL = {
     return dir
 }()
 
-/// AdvancementToast inside ToastManager: slides in over 600 ms (eased f²), holds 5 s, slides out.
+/// AdvancementToast inside ToastManager: slides in over 600 ms (eased f²), holds 10 s (5 in the game), slides out.
 /// As in the game, up to five show at once, stacked down the right edge. Each
 /// toast is its own process, so a slot is a lock file: the first free one from
 /// the top is taken and held until the toast has left.
-final class ToastScene: Scene {
+final class ToastScene: NSObject, Scene, NSSharingServicePickerDelegate {
     static let pitch: CGFloat = 62
+    /// How long a toast stays in, after its 600 ms slide; twice the game's five seconds.
+    static let hold: Double = 10_000
     let font = MCFont(loadImage("ascii.png")!)
     let icon: CGImage?
     let heading: String, color: UInt32, title: String, type: String
@@ -246,6 +248,16 @@ final class ToastScene: Scene {
     var began: Double? = nil
     var hidden = false
     var finished = false
+    // Where the toast and its Share button are now, in GUI pixels, and whether the pointer is on it.
+    var rect: CGRect = .zero
+    var shareRect: CGRect = .zero
+    var hovered = false
+    var overShare = false
+    var sharing = false
+    var shared = false
+    // Time in, less what was spent under the pointer or in the share menu.
+    var shownMs = 0.0
+    var lastT: Double? = nil
 
     init(type: String, title: String, iconName: String, desc: String, top: CGFloat) {
         icon = loadImage("item/\(iconName).png")
@@ -274,43 +286,97 @@ final class ToastScene: Scene {
         return false
     }
 
-    func draw(_ ctx: CGContext, t: Double, w: CGFloat, h: CGFloat) {
-        if began == nil {
-            guard claim() else { finished = t > 60; return }
-            began = t
-            playSound("toast_in")
-            if type == "challenge" { playSound("challenge_complete") }
-            if tutorial { hidden = false }
+    var size: CGSize {
+        if tutorial {
+            return CGSize(width: CGFloat(max(160, 30 + max(font.width(heading), lines.map { font.width($0) }.max() ?? 0) + 8)),
+                          height: CGFloat(max(32, 18 + lines.count * 9 + 6)))
         }
-        let ms = (t - began!) * 1000
-        var vis: Double
-        if ms < 5000 { let f = min(1, ms / 600); vis = f * f }
-        else {
-            if !hidden { hidden = true; playSound("toast_out") }
-            let f = min(1, (ms - 5000) / 600); vis = 1 - f * f
-        }
+        // The game's toast is 160 wide; a longer title widens it, and the heading leaves room for Share.
+        return CGSize(width: CGFloat(max(160, 30 + max(font.width(title), font.width(heading) + 46, lines.map { font.width($0) }.max() ?? 0) + 8)),
+                      height: CGFloat(32 + (lines.isEmpty ? 0 : lines.count * 9 + 2)))
+    }
+
+    /// The toast itself at (x, y); with `button`, its Share button too.
+    func paint(_ ctx: CGContext, _ x: CGFloat, _ y: CGFloat, button: Bool) {
+        let s = size
         if tutorial {
             // TutorialToast: a light frame, the title in purple, the text in black, one line lower.
-            let high = CGFloat(max(32, 18 + lines.count * 9 + 6))
-            let wide = CGFloat(max(160, 30 + max(font.width(heading), lines.map { font.width($0) }.max() ?? 0) + 8))
-            let x = w - wide * vis, y = top + CGFloat(slot) * ToastScene.pitch
-            nine(ctx, "gui/sprites/toast/tutorial.png", CGRect(x: x, y: y, width: wide, height: high), 4)
+            nine(ctx, "gui/sprites/toast/tutorial.png", CGRect(x: x, y: y, width: s.width, height: s.height), 4)
             if let icon { blit(ctx, icon, CGRect(x: x + 8, y: y + 8, width: 16, height: 16)) }
             font.draw(heading, x: x + 30, y: y + 7, rgb: color, in: ctx)
             for (i, line) in lines.enumerated() { font.draw(line, x: x + 30, y: y + 18 + CGFloat(i * 9), rgb: 0x000000, in: ctx) }
-            finished = ms >= 5600
             return
         }
-        let high = CGFloat(32 + (lines.isEmpty ? 0 : lines.count * 9 + 2))
-        // The game's toast is 160 wide; a longer title widens it rather than running off the edge.
-        let wide = CGFloat(max(160, 30 + max(font.width(title), font.width(heading), lines.map { font.width($0) }.max() ?? 0) + 8))
-        let x = w - wide * vis, y = top + CGFloat(slot) * ToastScene.pitch
-        nine(ctx, "toast_advancement.png", CGRect(x: x, y: y, width: wide, height: high), 4)
+        nine(ctx, "toast_advancement.png", CGRect(x: x, y: y, width: s.width, height: s.height), 4)
         if let icon { blit(ctx, icon, CGRect(x: x + 8, y: y + 8, width: 16, height: 16)) }
         font.draw(heading, x: x + 30, y: y + 7, rgb: color, in: ctx)
         font.draw(title, x: x + 30, y: y + 18, rgb: 0xFFFFFF, in: ctx)
         for (i, line) in lines.enumerated() { font.draw(line, x: x + 30, y: y + 30 + CGFloat(i * 9), rgb: 0xAAAAAA, in: ctx) }
-        finished = ms >= 5600
+        guard button else { return }
+        // A small game button in the top right corner, reading Shared once something was shared.
+        let label = shared ? "Shared" : "Share"
+        let r = CGRect(x: x + s.width - 42, y: y + 5, width: 36, height: 12)
+        nine(ctx, overShare ? "button_highlighted.png" : "button.png", r, 2)
+        font.draw(label, x: (r.midX - CGFloat(font.width(label)) / 2).rounded(.down), y: r.minY + 2, rgb: overShare ? 0xFFFFA0 : 0xE0E0E0, in: ctx)
+        shareRect = r
+    }
+
+    func draw(_ ctx: CGContext, t: Double, w: CGFloat, h: CGFloat) {
+        if began == nil {
+            guard claim() else { finished = t > 60; return }
+            began = t
+            lastT = t
+            playSound("toast_in")
+            if type == "challenge" { playSound("challenge_complete") }
+            if tutorial { hidden = false }
+        }
+        // The clock stops while the pointer is on the toast or its share menu is open, once it is all the way in.
+        let dt = (t - (lastT ?? t)) * 1000
+        lastT = t
+        if !(shownMs >= 600 && shownMs < ToastScene.hold && (hovered || sharing)) { shownMs += dt }
+        let ms = shownMs
+        var vis: Double
+        if ms < ToastScene.hold { let f = min(1, ms / 600); vis = f * f }
+        else {
+            if !hidden { hidden = true; playSound("toast_out") }
+            let f = min(1, (ms - ToastScene.hold) / 600); vis = 1 - f * f
+        }
+        let s = size
+        let x = w - s.width * vis, y = top + CGFloat(slot) * ToastScene.pitch
+        rect = CGRect(x: x, y: y, width: s.width, height: s.height)
+        paint(ctx, x, y, button: !tutorial)
+        finished = ms >= ToastScene.hold + 600
+    }
+
+    /// The pointer, in GUI pixels, from the view each frame (nil off the toast's display).
+    func point(_ p: CGPoint?) {
+        hovered = p.map(rect.contains) ?? false
+        overShare = !tutorial && (p.map(shareRect.contains) ?? false)
+    }
+
+    /// A click on the toast: Share opens the system's share menu with a picture of it.
+    func click(_ p: CGPoint, in view: NSView, gui: CGFloat) {
+        guard !tutorial, shareRect.contains(p), !sharing else { return }
+        playSound("click", volume: 0.25)
+        let s = size, k: CGFloat = 4
+        let ctx = bitmap(Int(s.width * k), Int(s.height * k))
+        ctx.interpolationQuality = .none
+        ctx.translateBy(x: 0, y: s.height * k); ctx.scaleBy(x: k, y: -k)
+        paint(ctx, 0, 0, button: false)
+        guard let shot = ctx.makeImage() else { return }
+        let picture = NSImage(cgImage: shot, size: NSSize(width: s.width * 2, height: s.height * 2))
+        let line = "\(heading) \(title)\(lines.isEmpty ? "" : ": " + lines.joined(separator: " ")) (Minecraft Claude Code Mod)"
+        let picker = NSSharingServicePicker(items: [picture, line])
+        picker.delegate = self
+        sharing = true
+        app.activate(ignoringOtherApps: true)
+        picker.show(relativeTo: NSRect(x: shareRect.minX * gui, y: shareRect.minY * gui, width: shareRect.width * gui, height: shareRect.height * gui),
+                    of: view, preferredEdge: .minY)
+    }
+
+    func sharingServicePicker(_ picker: NSSharingServicePicker, didChoose service: NSSharingService?) {
+        sharing = false
+        if service != nil { shared = true }
     }
 }
 
@@ -390,10 +456,13 @@ final class OverlayView: NSView {
         let p = convert(event.locationInWindow, from: nil)
         return CGPoint(x: p.x / gui, y: p.y / gui)
     }
-    override func mouseMoved(with event: NSEvent) { pointer = gui(event) }
-    override func mouseDragged(with event: NSEvent) { pointer = gui(event) }
-    override func mouseDown(with event: NSEvent) { pointer = gui(event); pressed = pointer; held = true }
-    override func mouseUp(with event: NSEvent) { pointer = gui(event); held = false; released = true }
+    override func mouseMoved(with event: NSEvent) { if !(scene is ToastScene) { pointer = gui(event) } }
+    override func mouseDragged(with event: NSEvent) { if !(scene is ToastScene) { pointer = gui(event) } }
+    override func mouseDown(with event: NSEvent) {
+        if let toast = scene as? ToastScene { toast.click(gui(event), in: self, gui: gui); return }
+        pointer = gui(event); pressed = pointer; held = true
+    }
+    override func mouseUp(with event: NSEvent) { if scene is ToastScene { return }; pointer = gui(event); held = false; released = true }
     override func scrollWheel(with event: NSEvent) {
         let k: CGFloat = event.hasPreciseScrollingDeltas ? 1 : 10
         // A mouse wheel held with shift scrolls across, as it does elsewhere on the Mac.
@@ -421,6 +490,14 @@ final class OverlayView: NSView {
         ctx.scaleBy(x: gui, y: gui)
         scene.draw(ctx, t: CACurrentMediaTime() - start, w: bounds.width / gui, h: bounds.height / gui)
         ctx.restoreGState()
+        // A toast's window lets clicks through everywhere but the toast: where the pointer is decides, each frame.
+        if let toast = scene as? ToastScene, let window {
+            let m = NSEvent.mouseLocation, f = window.frame
+            let p = NSMouseInRect(m, f, false) ? CGPoint(x: (m.x - f.minX) / gui, y: (f.maxY - m.y) / gui) : nil
+            toast.point(p)
+            let wanted = !(toast.hovered && !toast.tutorial)
+            if window.ignoresMouseEvents != wanted { window.ignoresMouseEvents = wanted }
+        }
     }
 }
 

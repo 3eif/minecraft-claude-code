@@ -23,7 +23,7 @@ It's a silly concept. It's also a real plugin.
 - **Level up:** XP orbs and the level-up chime.
 - **A villager's "hmm":** when Claude stops to ask you a question.
 
-**Advancements:** 113 of them in six tabs: Building (edits, commits, pull requests), Combat (tests), Exploration (tools, the terminal, subagents, the web), Survival (your limit and your context), Habits (prompts, tokens, levels, streaks) and The Deep Dark, the rare ones, which opens at 50 earned. Toasts stack in the corner like the game's, and the tree drags or scrolls. Each chain starts easy and runs deep: its last tiers take a heavy user months. Some are secret.
+**Advancements:** 113 of them in six tabs: Building (edits, commits, pull requests), Combat (tests), Exploration (tools, the terminal, subagents, the web), Survival (your limit and your context), Habits (prompts, tokens, levels, streaks) and The Deep Dark, the rare ones, which opens at 50 earned. Toasts stack in the corner like the game's and stay ten seconds (longer while the pointer is on one); Share sends a picture of one through the Mac's share menu. In the tree, each says when you earned it, and a star marks what is new since you last looked. Each chain starts easy and runs deep: its last tiers take a heavy user months. Some are secret.
 
 **The hotbar:** click a slot to open its screen.
 
