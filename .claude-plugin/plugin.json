@@ -1,33 +1,8 @@
 {
   "name": "minecraft-hud",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "description": "Minecraft's survival HUD for Claude Code: hearts for your usage limit, hunger for the context window, XP for tokens",
   "author": {
     "name": "Seif Abdelaziz"
-  },
-  "userConfig": {
-    "sounds": {
-      "type": "boolean",
-      "title": "Sounds",
-      "description": "Play the game's sounds for damage, eating, XP, questions and the totem",
-      "default": true
-    },
-    "volume": {
-      "type": "string",
-      "title": "Volume",
-      "description": "How loud the sounds play",
-      "options": [
-        "25%",
-        "50%",
-        "100%"
-      ],
-      "default": "100%"
-    },
-    "fullscreen": {
-      "type": "boolean",
-      "title": "Full-screen moments",
-      "description": "Play the totem, the death screen and advancements across the whole screen. Off keeps them above the prompt.",
-      "default": true
-    }
   }
 }

@@ -7,7 +7,7 @@
 ## Install
 
 ```bash
-claude plugin install minecraft-hud --marketplace 3eif/minecraft-hud
+claude plugin install minecraft-hud --marketplace https://github.com/3eif/minecraft-hud.git
 ```
 
 Start a new chat. A four-page guide opens the first time (`/minecraft help` brings it back).
@@ -33,7 +33,7 @@ Needs **macOS 12+** (Apple Silicon or Intel) and the **Claude Code desktop app**
 - **Totem of Undying** when your weekly limit resets: once, small, quiet.
 - **Golden apple** when a chat compacts, the **level-up** chime, a **villager's "hmm"** when Claude asks you something.
 
-**113 advancements** in six tabs (Building, Combat, Exploration, Survival, Habits, and The Deep Dark, which opens at 50). They start easy and run deep: the last tiers take a heavy user months, and some are secret. Each toast stays ten seconds and has a **Share** button; the tree shows when you earned each one and stars what's new.
+**113 advancements** in six tabs (Building, Combat, Exploration, Survival, Habits, and The Deep Dark, which opens at 50). They start easy and run deep: the last tiers take a heavy user months, and some are secret. Each toast stays ten seconds, and hovering it shows a **Share** button; the tree shows when you earned each one and stars what's new.
 
 ![An advancement toast with its Share button](docs/toast.png)
 
@@ -68,7 +68,7 @@ Everything lives under `/minecraft`.
 | **Jukebox** | `Space` pauses; click or drag the track to seek; `Delete` leaves an album; `E` closes it |
 | **Guide** | `→` / `Return` next, `←` back |
 | **Settings** | `Return` or `Esc` goes back a page |
-| **Toasts** | Hover to keep one up; **Share** sends a picture of it |
+| **Toasts** | Hover to keep one up and show **Share**, which sends a picture of it |
 | **Parrot** | Drag it anywhere; click and it hops; right-click for a new coat |
 
 ## How it works

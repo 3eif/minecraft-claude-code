@@ -254,6 +254,8 @@ final class ToastScene: NSObject, Scene, NSSharingServicePickerDelegate {
     var shareRect: CGRect = .zero
     var hovered = false
     var overShare = false
+    // Share shows while the pointer is on the toast and two seconds after it leaves, so it can still be reached.
+    var shareUntil = -1.0
     var sharing = false
     var shared = false
     // Time in, less what was spent under the pointer or in the share menu.
@@ -345,10 +347,13 @@ final class ToastScene: NSObject, Scene, NSSharingServicePickerDelegate {
         }
         let s = size
         let x = w - s.width * vis, y = top + CGFloat(slot) * ToastScene.pitch
-        paint(ctx, x, y, button: !tutorial)
-        // What takes the pointer: the toast, and its button under it.
+        if hovered { shareUntil = t + 2 }
+        let showShare = !tutorial && (t < shareUntil || sharing || ProcessInfo.processInfo.environment["MC_TOAST_HOVER"] != nil)
+        if !showShare { shareRect = .zero; overShare = false }
+        paint(ctx, x, y, button: showShare)
+        // What takes the pointer: the toast, and its button under it while it shows.
         let toast = CGRect(x: x, y: y, width: s.width, height: s.height)
-        rect = tutorial ? toast : toast.union(shareRect)
+        rect = showShare ? toast.union(shareRect) : toast
         finished = ms >= ToastScene.hold + 600
     }
 

@@ -1259,11 +1259,8 @@ function open($: EngineInterface, id: string) {
 const DEMOS = ['damage', 'low', 'apple', 'starve', 'death', 'reset', 'totem', 'advancement', 'xp', 'villager', 'hardcore', 'hunger', 'live', 'debug']
 const SCREENS = ['help', 'parrot', 'advancements', 'music', 'settings', 'clear', 'reset all']
 
-export const register: Register = (on, options) => {
-  const chosen = options as { sounds?: boolean; volume?: string; fullscreen?: boolean }
-  sounds = chosen.sounds !== false
-  volume = (parseInt(chosen.volume ?? '100', 10) || 100) / 100
-  fullscreen = chosen.fullscreen !== false
+// Sounds, volume and full-screen moments are set in the game's own Settings screen, kept in the store.
+export const register: Register = on => {
 
   on('session.start', async ($, e, next) => {
     for (const timer of timers) timer.cancel()
