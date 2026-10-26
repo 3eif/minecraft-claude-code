@@ -118,6 +118,8 @@ func tellPlayer(_ command: [String: Any]) {
 }
 
 func readPlayerState() -> [String: Any] {
+    // MC_PLAYER_STATE, for a snapshot: the player's state as given, nothing playing for real.
+    if let given = ProcessInfo.processInfo.environment["MC_PLAYER_STATE"] { return spec(given) }
     guard playerRunning(), let data = try? Data(contentsOf: playerState) else { return [:] }
     return (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
 }

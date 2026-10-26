@@ -541,3 +541,96 @@ final class GuideScene: Scene {
         endFrame()
     }
 }
+
+// MARK: the README's hero
+
+/// The README's first picture alone (mode "hero", MC_GUI_SCALE=1): Claude Code's
+/// prompt area drawn from scratch, large, with the HUD in its band above the input,
+/// so the HUD reads at the README's width. The HUD at 6 pixels to the GUI pixel and
+/// the hotbar at 5, whole numbers so every edge is crisp.
+final class HeroScene: Scene {
+    let finished = true
+    init(_ json: String) {}
+
+    func label(_ ctx: CGContext, _ s: String, _ x: CGFloat, _ y: CGFloat, size: CGFloat, color: NSColor, weight: NSFont.Weight = .regular, right: Bool = false) {
+        let string = NSAttributedString(string: s, attributes: [.font: NSFont.systemFont(ofSize: size, weight: weight), .foregroundColor: color])
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(cgContext: ctx, flipped: true)
+        string.draw(at: NSPoint(x: right ? x - string.size().width : x, y: y))
+        NSGraphicsContext.restoreGraphicsState()
+    }
+
+    func symbol(_ ctx: CGContext, _ name: String, _ x: CGFloat, _ y: CGFloat, _ size: CGFloat, _ color: NSColor) {
+        guard let base = NSImage(systemSymbolName: name, accessibilityDescription: nil)?.withSymbolConfiguration(.init(pointSize: size, weight: .regular)) else { return }
+        let tinted = NSImage(size: base.size, flipped: false) { rect in base.draw(in: rect); color.set(); rect.fill(using: .sourceAtop); return true }
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(cgContext: ctx, flipped: true)
+        tinted.draw(in: NSRect(x: x, y: y, width: base.size.width, height: base.size.height))
+        NSGraphicsContext.restoreGraphicsState()
+    }
+
+    func rounded(_ ctx: CGContext, _ r: CGRect, _ radius: CGFloat, fill: UInt32, stroke: UInt32? = nil) {
+        let path = CGPath(roundedRect: r, cornerWidth: radius, cornerHeight: radius, transform: nil)
+        let c = { (v: UInt32) in CGColor(red: CGFloat(v >> 16 & 0xFF) / 255, green: CGFloat(v >> 8 & 0xFF) / 255, blue: CGFloat(v & 0xFF) / 255, alpha: 1) }
+        ctx.addPath(path); ctx.setFillColor(c(fill)); ctx.fillPath()
+        if let stroke { ctx.addPath(path); ctx.setStrokeColor(c(stroke)); ctx.setLineWidth(2); ctx.strokePath() }
+    }
+
+    func draw(_ ctx: CGContext, t: Double, w: CGFloat, h: CGFloat) {
+        fill(ctx, CGRect(x: 0, y: 0, width: w, height: h), 0xFFFFFFFF)
+        let left: CGFloat = 160, width = w - 2 * left
+        let grey = NSColor(white: 0.45, alpha: 1), faint = NSColor(white: 0.62, alpha: 1)
+
+        // The end of the conversation above the band.
+        label(ctx, "Done. The export button shows a spinner and stays disabled until the file is ready.", left + 30, 40, size: 34, color: NSColor(white: 0.13, alpha: 1))
+        label(ctx, "Edited ExportButton.tsx, ran the tests  +14 -1", left + 30, 100, size: 30, color: faint)
+
+        // The band: its grey panel, the HUD at the left, the hotbar at the right.
+        let k: CGFloat = 6, hk: CGFloat = 5, pad: CGFloat = 26
+        let slots = ["knowledge_book", "jukebox", "parrot_spawn_egg", "comparator"]
+        let barW = CGFloat(20 * slots.count + 2)
+        let panel = CGRect(x: left, y: 190, width: width, height: 22 * hk + 2 * pad)
+        rounded(ctx, panel, 34, fill: 0xF2F2F1)
+        let g = ((width - 2 * pad - barW * hk - 24) / k).rounded(.down)
+        ctx.saveGState(); ctx.translateBy(x: left + pad, y: panel.maxY - pad - 18 * k); ctx.scaleBy(x: k, y: k)
+        for i in 0..<10 {
+            sprite(ctx, "gui/sprites/hud/heart/container.png", CGFloat(i * 8), 2)
+            if i < 7 { sprite(ctx, "gui/sprites/hud/heart/full.png", CGFloat(i * 8), 2) } else if i == 7 { sprite(ctx, "gui/sprites/hud/heart/half.png", CGFloat(i * 8), 2) }
+            let fx = g - 9 - CGFloat(i * 8)
+            sprite(ctx, "gui/sprites/hud/food_empty.png", fx, 2)
+            if i < 6 { sprite(ctx, "gui/sprites/hud/food_full.png", fx, 2) } else if i == 6 { sprite(ctx, "gui/sprites/hud/food_half.png", fx, 2) }
+        }
+        for (name, clip) in [("experience_bar_background", g), ("experience_bar_progress", (g * 0.62).rounded())] {
+            guard let bar = image("gui/sprites/hud/\(name).png") else { continue }
+            ctx.saveGState(); ctx.clip(to: CGRect(x: 0, y: 12, width: clip, height: 5))
+            let n = Int(((g - 2) / 10).rounded(.up))
+            if let cap = bar.cropping(to: CGRect(x: 0, y: 0, width: 1, height: 5)) { blit(ctx, cap, CGRect(x: 0, y: 12, width: 1, height: 5)) }
+            for i in 0..<n {
+                let from = 1 + 10 * (i == n - 1 ? 17 : i % 17)
+                if let piece = bar.cropping(to: CGRect(x: from, y: 0, width: 10, height: 5)) { blit(ctx, piece, CGRect(x: 1 + CGFloat(i * 10), y: 12, width: 10, height: 5)) }
+            }
+            if let cap = bar.cropping(to: CGRect(x: 181, y: 0, width: 1, height: 5)) { blit(ctx, cap, CGRect(x: g - 1, y: 12, width: 1, height: 5)) }
+            ctx.restoreGState()
+        }
+        let level = "57", lx = ((g - CGFloat(uiFont.width(level))) / 2).rounded(.down)
+        for (dx, dy) in [(1, 0), (-1, 0), (0, 1), (0, -1)] { text(ctx, level, lx + CGFloat(dx), 6 + CGFloat(dy), 0x000000) }
+        text(ctx, level, lx, 6, 0x80FF20)
+        ctx.restoreGState()
+        ctx.saveGState(); ctx.translateBy(x: panel.maxX - pad - barW * hk, y: panel.maxY - pad - 22 * hk); ctx.scaleBy(x: hk, y: hk)
+        if let bar = image("gui/sprites/hud/hotbar.png") {
+            if let a = bar.cropping(to: CGRect(x: 0, y: 0, width: barW - 1, height: 22)) { blit(ctx, a, CGRect(x: 0, y: 0, width: barW - 1, height: 22)) }
+            if let b = bar.cropping(to: CGRect(x: 181, y: 0, width: 1, height: 22)) { blit(ctx, b, CGRect(x: barW - 1, y: 0, width: 1, height: 22)) }
+        }
+        for (i, icon) in slots.enumerated() { item(ctx, icon, CGFloat(3 + 20 * i), 3) }
+        ctx.restoreGState()
+
+        // The prompt input under it, and the mode and model under that.
+        let input = CGRect(x: left, y: panel.maxY + 22, width: width, height: 120)
+        rounded(ctx, input, 36, fill: 0xFFFFFF, stroke: 0xE1E1E0)
+        symbol(ctx, "plus", input.minX + 34, input.midY - 20, 34, grey)
+        label(ctx, "Type / for commands", input.minX + 100, input.midY - 24, size: 36, color: faint)
+        symbol(ctx, "mic", input.maxX - 74, input.midY - 24, 34, grey)
+        label(ctx, "Auto", input.minX + 40, input.maxY + 26, size: 30, color: grey)
+        label(ctx, "Opus 5.5   High", input.maxX - 40, input.maxY + 26, size: 30, color: grey, right: true)
+    }
+}

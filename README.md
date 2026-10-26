@@ -2,7 +2,7 @@
 
 **Claude Code, played as Minecraft survival.** Your usage limit is your hearts. The context window is your hunger. Every token is XP. Hit your limit and you die; compact a chat and you eat a golden apple; ship a pull request and an advancement slides into the corner.
 
-![Claude Code with the HUD above the prompt: hearts, hunger, XP and the hotbar](docs/hud.png)
+![The HUD above Claude Code's prompt: hearts for the usage limit, hunger for the context, the XP bar and the hotbar](docs/hud.png)
 
 ## Install
 
