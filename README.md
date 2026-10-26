@@ -7,7 +7,7 @@
 ## Install
 
 ```bash
-claude plugin install minecraft-hud --marketplace https://github.com/3eif/minecraft-hud.git
+claude plugin install minecraft-hud --marketplace https://github.com/3eif/minecraft-claude-code.git
 ```
 
 Start a new chat. A four-page guide opens the first time (`/minecraft help` brings it back).
