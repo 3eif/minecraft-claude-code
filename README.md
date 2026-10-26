@@ -66,6 +66,7 @@ Everything lives under `/minecraft`.
 | **Any screen** | `Esc` closes it; so does a click outside the tree or the jukebox |
 | **Advancements** | Drag, scroll or swipe to move around; `L` closes it, as in the game |
 | **Jukebox** | `Space` pauses; click or drag the track to seek; `Delete` leaves an album; `E` closes it |
+| **Music, anywhere** | The keyboard's play/pause and skip keys, Control Center's Now Playing, and headphone taps control the jukebox |
 | **Guide** | `→` / `Return` next, `←` back |
 | **Settings** | `Return` or `Esc` goes back a page |
 | **Toasts** | Hover to keep one up and show **Share**, which sends a picture of it |

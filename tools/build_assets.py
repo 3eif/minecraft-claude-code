@@ -114,7 +114,7 @@ for d in discs: save(icon(f'music_disc_{d}'), f'item/music_disc_{d}.png')
 json.dump([dict(id=d, title=lang[f'jukebox_song.minecraft.{d}']) for d in discs], open(os.path.join(ROOT, 'assets', 'music.json'), 'w'), ensure_ascii=False, indent=1)
 copy('particle/note', 'particle/note.png')
 # The guide draws the HUD itself, so it needs the HUD's own sprites, and the tutorial toasts their frame.
-for s in ['heart/container', 'heart/full', 'heart/half', 'food_empty', 'food_full', 'food_half', 'experience_bar_background', 'experience_bar_progress', 'hotbar']:
+for s in ['heart/container', 'heart/full', 'heart/half', 'food_empty', 'food_full', 'food_half', 'experience_bar_background', 'experience_bar_progress', 'hotbar', 'hotbar_selection']:
     copy(f'gui/sprites/hud/{s}', f'gui/sprites/hud/{s}.png')
 copy('gui/sprites/toast/tutorial', 'gui/sprites/toast/tutorial.png')
 copy('gui/sprites/container/slot', 'gui/sprites/container/slot.png')

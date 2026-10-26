@@ -12,6 +12,7 @@
 
 import AppKit
 import AVFoundation
+import MediaPlayer
 
 /// A track: where its file is (or will be, once fetched), and where to fetch it from when it is not there.
 struct Track { let path: String, title: String, icon: String; var url: String? = nil }
@@ -200,6 +201,7 @@ final class Player: NSObject, AVAudioPlayerDelegate {
         default: break
         }
         write()
+        nowPlaying()
     }
 
     func toggle() {
@@ -247,6 +249,7 @@ final class Player: NSObject, AVAudioPlayerDelegate {
                     made.volume = Float(jukeboxVolume)
                     made.play()
                     self.audio = made
+                    self.nowPlaying()
                     if self.announce { self.showBanner("Now Playing: \(clean(track.title))") }
                     self.write()
                 }
@@ -315,6 +318,7 @@ func runPlayer(_ first: String?) -> Never {
     }
     guard locked else { exit(0) }
     let player = Player()
+    player.remote()
     let center = DistributedNotificationCenter.default()
     let observer = center.addObserver(forName: playerCommand, object: nil, queue: .main) { note in
         if let json = note.object as? String { player.handle(json) }
@@ -539,20 +543,16 @@ final class JukeboxScene: Scene {
             }
         }
         text(ctx, "Soundtrack", L + 8, T + 153, 0x404040)
+        var selected: Slot? = nil
         for i in 0..<9 {
             let s = Slot(x: CGFloat(8 + 18 * i), y: 164)
             sprite(ctx, "gui/sprites/container/slot.png", L + s.x - 1, T + s.y - 1)
             guard i < library.albums.count else { continue }
             let album = library.albums[i]
-            // An album playing stays in its slot, outlined in green, so it can still be opened to its tracks.
+            // An album playing stays in its slot, framed as the game frames the selected hotbar slot, so it can still be opened.
             let now = playing && state["album"] as? String == album.name
             item(ctx, album.icon, L + s.x, T + s.y)
-            if now {
-                for edge in [CGRect(x: s.x - 1, y: s.y - 1, width: 18, height: 1), CGRect(x: s.x - 1, y: s.y + 16, width: 18, height: 1),
-                             CGRect(x: s.x - 1, y: s.y, width: 1, height: 16), CGRect(x: s.x + 16, y: s.y, width: 1, height: 16)] {
-                    fill(ctx, edge.offsetBy(dx: L, dy: T), 0xFF55FF55)
-                }
-            }
+            if now { selected = s }
             if over(s, L, T) {
                 fill(ctx, CGRect(x: L + s.x, y: T + s.y, width: 16, height: 16), 0x80FFFFFF)
                 if now { tip = [(album.name, 0xFFFFFF), ("Playing now", 0x55FF55), ("Click to see its tracks", 0xAAAAAA)] }
@@ -560,6 +560,8 @@ final class JukeboxScene: Scene {
                 if pressed != nil { openAlbum = i; scroll = 0; playSound("click", volume: 0.12) }
             }
         }
+        // Over its neighbours, as the hotbar's frame is: 24 by 23, centred on the slot.
+        if let s = selected { sprite(ctx, "gui/sprites/hud/hotbar_selection.png", L + s.x - 4, T + s.y - 4) }
         if library.discs.isEmpty, library.albums.isEmpty {
             centered(ctx, indexFailed ? "Mojang's servers could not be reached for the music." : "Getting the music list from Mojang...", w / 2, T + H + 8, 0xFFFFFF)
         }
@@ -571,5 +573,62 @@ final class JukeboxScene: Scene {
             finished = true
         }
         endFrame()
+    }
+}
+
+// MARK: the Mac's media controls
+
+/// The keyboard's play, pause and skip keys, Control Center's Now Playing, and a
+/// headset's taps all reach the player as its own commands; Now Playing shows the
+/// track, its album and its disc or album icon.
+extension Player {
+    func remote() {
+        let c = MPRemoteCommandCenter.shared()
+        let run = { [weak self] (command: String) -> MPRemoteCommandHandlerStatus in
+            self?.handle("{\"cmd\":\"\(command)\"}")
+            return .success
+        }
+        c.togglePlayPauseCommand.addTarget { _ in run("toggle") }
+        c.playCommand.addTarget { [weak self] _ in self?.paused == true ? run("toggle") : .success }
+        c.pauseCommand.addTarget { [weak self] _ in self?.paused == false ? run("toggle") : .success }
+        c.nextTrackCommand.addTarget { _ in run("next") }
+        c.previousTrackCommand.addTarget { _ in run("prev") }
+        c.changePlaybackPositionCommand.addTarget { [weak self] event in
+            guard let to = (event as? MPChangePlaybackPositionCommandEvent)?.positionTime else { return .commandFailed }
+            self?.handle("{\"cmd\":\"seek\",\"to\":\(to)}")
+            return .success
+        }
+    }
+
+    func nowPlaying() {
+        let center = MPNowPlayingInfoCenter.default()
+        guard queue.indices.contains(index), let audio else {
+            center.nowPlayingInfo = nil
+            center.playbackState = .stopped
+            return
+        }
+        let track = queue[index]
+        var info: [String: Any] = [
+            MPMediaItemPropertyTitle: clean(track.title),
+            MPMediaItemPropertyArtist: "Minecraft",
+            MPMediaItemPropertyAlbumTitle: album.isEmpty ? "Music Discs" : album,
+            MPMediaItemPropertyPlaybackDuration: audio.duration,
+            MPNowPlayingInfoPropertyElapsedPlaybackTime: audio.currentTime,
+            MPNowPlayingInfoPropertyPlaybackRate: paused ? 0.0 : 1.0,
+        ]
+        if let art = artwork(track.icon) { info[MPMediaItemPropertyArtwork] = art }
+        center.nowPlayingInfo = info
+        center.playbackState = paused ? .paused : .playing
+    }
+
+    /// The track's icon, its pixels kept sharp at the size Now Playing draws it.
+    func artwork(_ name: String) -> MPMediaItemArtwork? {
+        guard let icon = loadImage("item/\(name).png") else { return nil }
+        let ctx = bitmap(256, 256)
+        ctx.interpolationQuality = .none
+        ctx.draw(icon, in: CGRect(x: 32, y: 32, width: 192, height: 192))
+        guard let made = ctx.makeImage() else { return nil }
+        let picture = NSImage(cgImage: made, size: NSSize(width: 256, height: 256))
+        return MPMediaItemArtwork(boundsSize: picture.size) { _ in picture }
     }
 }
