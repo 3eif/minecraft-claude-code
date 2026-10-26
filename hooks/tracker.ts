@@ -81,9 +81,15 @@ export function due(p: Progress, now: number) {
 const short = (n: number) =>
   n >= 1e9 ? `${+(n / 1e9).toFixed(1)}B` : n >= 1e6 ? `${+(n / 1e6).toFixed(1)}M` : n >= 1e4 ? `${Math.floor(n / 1e3)}K` : String(Math.floor(n))
 
-/** The tree as the advancements screen takes it. A secret one stays out until it is earned. */
-export function tree(p: Progress, now: number) {
+/**
+ * The tree as the advancements screen takes it. A secret one stays out until it is
+ * earned. One earned after `seen` (when the tree was last opened) is new, and the
+ * tree opens on the tab of the newest.
+ */
+export function tree(p: Progress, now: number, seen = now) {
+  const newest = ADVANCEMENTS.filter(a => (p.earned[a.id] ?? 0) > seen).sort((a, b) => p.earned[b.id]! - p.earned[a.id]!)[0]
   return {
+    ...(newest ? { open: newest.tab } : {}),
     tabs: TABS.map((tab, index) => ({
       ...tab,
       items: ADVANCEMENTS.filter(a => a.tab === index && (!a.secret || p.earned[a.id])).map(a => {
@@ -98,6 +104,8 @@ export function tree(p: Progress, now: number) {
           icon: a.icon,
           desc: a.desc,
           earned,
+          // When, for the screen to write as a date in this Mac's own time.
+          ...(earned ? { at: p.earned[a.id], fresh: p.earned[a.id]! > seen } : {}),
           progress: !earned && a.counter && a.need > 1 ? `${short(at * scale)}/${short(a.need * scale)}` : null,
           part: a.counter ? Math.min(1, at / a.need) : 0,
         }

@@ -1131,10 +1131,15 @@ async function showGuide($: EngineInterface) {
   await screen($, 'guide', {})
 }
 
+// New is what was earned since the tree was last opened, in any chat.
 async function showAdvancements($: EngineInterface) {
   await settle($)
   saved = merge(await storedProgress($), blank())
-  await screen($, 'advancements', tree(merge(saved, mine), await $.clock.now()))
+  const now = await $.clock.now()
+  const seen = Number((await $.store.get('treeSeenAt')) ?? 0)
+  const shown = screen($, 'advancements', tree(merge(saved, mine), now, seen))
+  await $.store.set('treeSeenAt', now)
+  await shown
 }
 
 async function clearXP($: EngineInterface) {

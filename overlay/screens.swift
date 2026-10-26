@@ -153,10 +153,28 @@ func endFrame() { pressed = nil; released = false; keys = []; scrolled = 0; scro
 
 // MARK: advancements
 
+/// A new advancement's mark: a five-pixel star in the game's yellow, outlined so it reads on any background.
+func sparkle(_ ctx: CGContext, _ x: CGFloat, _ y: CGFloat) {
+    let star = [(2, 0), (1, 1), (2, 1), (3, 1), (0, 2), (1, 2), (2, 2), (3, 2), (4, 2), (1, 3), (2, 3), (3, 3), (2, 4)]
+    let dot = { (dx: Int, dy: Int, argb: UInt32) in fill(ctx, CGRect(x: x + CGFloat(dx), y: y + CGFloat(dy), width: 1, height: 1), argb) }
+    for (dx, dy) in star { for (ox, oy) in [(-1, 0), (1, 0), (0, -1), (0, 1)] { dot(dx + ox, dy + oy, 0xFF3F3F00) } }
+    for (dx, dy) in star { dot(dx, dy, 0xFFFFFF55) }
+    dot(2, 2, 0xFFFFFFFF)
+}
+
+/// "Oct 26, 2026", in this Mac's own time.
+let earnedDate: DateFormatter = {
+    let f = DateFormatter()
+    f.locale = Locale(identifier: "en_US_POSIX")
+    f.dateFormat = "MMM d, yyyy"
+    return f
+}()
+
 final class AdvancementsScene: Scene {
     struct Node {
         let id: String, parent: String?, name: String, frame: String, icon: String, desc: String
         let earned: Bool, progress: String?, part: CGFloat
+        let at: Double?, fresh: Bool      // when it was earned (ms), and whether since the tree was last opened
         var x: CGFloat = 0, y: CGFloat = 0
     }
     struct Tab { let name: String, bg: String, icon: String; var nodes: [Node]; var sx: CGFloat = 0, sy: CGFloat = 0; var minX: CGFloat = 0, maxX: CGFloat = 0, minY: CGFloat = 0, maxY: CGFloat = 0 }
@@ -187,7 +205,8 @@ final class AdvancementsScene: Scene {
             var nodes = (raw["items"] as? [[String: Any]] ?? []).map {
                 Node(id: $0["id"] as? String ?? "", parent: $0["parent"] as? String, name: clean($0["name"] as? String ?? ""), frame: $0["frame"] as? String ?? "task",
                      icon: $0["icon"] as? String ?? "", desc: clean($0["desc"] as? String ?? ""), earned: $0["earned"] as? Bool ?? false,
-                     progress: $0["progress"] as? String, part: CGFloat($0["part"] as? Double ?? 0))
+                     progress: $0["progress"] as? String, part: CGFloat($0["part"] as? Double ?? 0),
+                     at: $0["at"] as? Double, fresh: $0["fresh"] as? Bool ?? false)
             }
             // A tidy tree, root at the left: each depth is a column, each leaf a row.
             var row: CGFloat = 0
@@ -273,6 +292,7 @@ final class AdvancementsScene: Scene {
             let fx = ox + node.x + 3, fy = oy + node.y
             sprite(ctx, "gui/sprites/advancements/\(node.frame)_frame_\(node.earned ? "obtained" : "unobtained").png", fx, fy)
             item(ctx, node.icon, fx + 5, fy + 5)
+            if node.fresh { sparkle(ctx, fx + 19, fy) }
             if !dragging, let p = pointer, inner.contains(p), CGRect(x: fx, y: fy, width: 26, height: 26).contains(p) { hovered = node }
         }
         fade = hovered == nil ? max(0, fade - 0.04) : min(0.3, fade + 0.02)
@@ -287,14 +307,18 @@ final class AdvancementsScene: Scene {
             let side = i == 0 ? "left" : "middle"
             sprite(ctx, "gui/sprites/advancements/tab_above_\(side)\(i == selected ? "_selected" : "").png", x, y)
             item(ctx, tabs[i].icon, x + 6, y + 9)
+            if tabs[i].nodes.contains(where: \.fresh) { sparkle(ctx, x + 20, y + 3) }
             if let p = pointer, CGRect(x: x, y: y, width: 28, height: 28).contains(p) { tabTip = tabs[i].name }
         }
 
         if let node = hovered {
             // The title bar with the frame over its left end, the description hanging beneath.
-            let lines = wrap(node.desc, 163)
-            let titleW = uiFont.width(node.name) + (node.progress.map { uiFont.width($0) + 8 } ?? 0)
-            let bw = CGFloat(max(titleW, lines.map { uiFont.width($0) }.max() ?? 0) + 37)
+            // Under the description, when it was earned; at the title's right, how far along, or that it is new.
+            var lines = wrap(node.desc, 163).map { ($0, UInt32(node.earned ? 0x55FF55 : 0xAAAAAA)) }
+            if let at = node.at { lines.append(("Earned \(earnedDate.string(from: Date(timeIntervalSince1970: at / 1000)))", 0x808080)) }
+            let tag = node.progress ?? (node.fresh ? "New!" : nil)
+            let titleW = uiFont.width(node.name) + (tag.map { uiFont.width($0) + 8 } ?? 0)
+            let bw = CGFloat(max(titleW, lines.map { uiFont.width($0.0) }.max() ?? 0) + 37)
             var bx = ox + node.x
             let by = oy + node.y
             if bx + bw > w - 4 { bx = w - 4 - bw }
@@ -306,8 +330,8 @@ final class AdvancementsScene: Scene {
                 ctx.restoreGState()
             }
             text(ctx, node.name, bx + 32, by + 9, 0xFFFFFF, shadow: true)
-            if let progress = node.progress { text(ctx, progress, bx + bw - CGFloat(uiFont.width(progress)) - 5, by + 9, 0xFFFFFF, shadow: true) }
-            for (i, line) in lines.enumerated() { text(ctx, line, bx + 5, by + 26 + CGFloat(i * 9), node.earned ? 0x55FF55 : 0xAAAAAA) }
+            if let tag { text(ctx, tag, bx + bw - CGFloat(uiFont.width(tag)) - 5, by + 9, node.progress == nil ? 0xFFFF55 : 0xFFFFFF, shadow: true) }
+            for (i, line) in lines.enumerated() { text(ctx, line.0, bx + 5, by + 26 + CGFloat(i * 9), line.1) }
             sprite(ctx, "gui/sprites/advancements/\(node.frame)_frame_\(node.earned ? "obtained" : "unobtained").png", ox + node.x + 3, by)
             item(ctx, node.icon, ox + node.x + 8, by + 5)
         } else if let tip = tabTip, let p = pointer { tooltip(ctx, [(tip, 0xFFFFFF)], p, w, h) }
