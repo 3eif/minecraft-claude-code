@@ -234,7 +234,8 @@ let cacheDir: URL = {
 /// toast is its own process, so a slot is a lock file: the first free one from
 /// the top is taken and held until the toast has left.
 final class ToastScene: NSObject, Scene, NSSharingServicePickerDelegate {
-    static let pitch: CGFloat = 62
+    // A toast's room in the stack: the tallest one, and the Share button under it.
+    static let pitch: CGFloat = 82
     /// How long a toast stays in, after its 600 ms slide; twice the game's five seconds.
     static let hold: Double = 10_000
     let font = MCFont(loadImage("ascii.png")!)
@@ -291,8 +292,8 @@ final class ToastScene: NSObject, Scene, NSSharingServicePickerDelegate {
             return CGSize(width: CGFloat(max(160, 30 + max(font.width(heading), lines.map { font.width($0) }.max() ?? 0) + 8)),
                           height: CGFloat(max(32, 18 + lines.count * 9 + 6)))
         }
-        // The game's toast is 160 wide; a longer title widens it, and the heading leaves room for Share.
-        return CGSize(width: CGFloat(max(160, 30 + max(font.width(title), font.width(heading) + 46, lines.map { font.width($0) }.max() ?? 0) + 8)),
+        // The game's toast is 160 wide; a longer title widens it rather than running off the edge.
+        return CGSize(width: CGFloat(max(160, 30 + max(font.width(title), font.width(heading), lines.map { font.width($0) }.max() ?? 0) + 8)),
                       height: CGFloat(32 + (lines.isEmpty ? 0 : lines.count * 9 + 2)))
     }
 
@@ -313,11 +314,12 @@ final class ToastScene: NSObject, Scene, NSSharingServicePickerDelegate {
         font.draw(title, x: x + 30, y: y + 18, rgb: 0xFFFFFF, in: ctx)
         for (i, line) in lines.enumerated() { font.draw(line, x: x + 30, y: y + 30 + CGFloat(i * 9), rgb: 0xAAAAAA, in: ctx) }
         guard button else { return }
-        // A small game button in the top right corner, reading Shared once something was shared.
+        // A game button under the toast's right end, reading Shared once something was shared.
         let label = shared ? "Shared" : "Share"
-        let r = CGRect(x: x + s.width - 42, y: y + 5, width: 36, height: 12)
+        let bw = CGFloat(font.width(label) + 16)
+        let r = CGRect(x: x + s.width - bw, y: y + s.height + 2, width: bw, height: 16)
         nine(ctx, overShare ? "button_highlighted.png" : "button.png", r, 2)
-        font.draw(label, x: (r.midX - CGFloat(font.width(label)) / 2).rounded(.down), y: r.minY + 2, rgb: overShare ? 0xFFFFA0 : 0xE0E0E0, in: ctx)
+        font.draw(label, x: (r.midX - CGFloat(font.width(label)) / 2).rounded(.down), y: r.minY + 4, rgb: overShare ? 0xFFFFA0 : 0xE0E0E0, in: ctx)
         shareRect = r
     }
 
@@ -343,8 +345,10 @@ final class ToastScene: NSObject, Scene, NSSharingServicePickerDelegate {
         }
         let s = size
         let x = w - s.width * vis, y = top + CGFloat(slot) * ToastScene.pitch
-        rect = CGRect(x: x, y: y, width: s.width, height: s.height)
         paint(ctx, x, y, button: !tutorial)
+        // What takes the pointer: the toast, and its button under it.
+        let toast = CGRect(x: x, y: y, width: s.width, height: s.height)
+        rect = tutorial ? toast : toast.union(shareRect)
         finished = ms >= ToastScene.hold + 600
     }
 
@@ -354,7 +358,7 @@ final class ToastScene: NSObject, Scene, NSSharingServicePickerDelegate {
         overShare = !tutorial && (p.map(shareRect.contains) ?? false)
     }
 
-    /// A click on the toast: Share opens the system's share menu with a picture of it.
+    /// A click on the toast: Share opens the system's share menu with a picture of it, and nothing else.
     func click(_ p: CGPoint, in view: NSView, gui: CGFloat) {
         guard !tutorial, shareRect.contains(p), !sharing else { return }
         playSound("click", volume: 0.25)
@@ -365,8 +369,7 @@ final class ToastScene: NSObject, Scene, NSSharingServicePickerDelegate {
         paint(ctx, 0, 0, button: false)
         guard let shot = ctx.makeImage() else { return }
         let picture = NSImage(cgImage: shot, size: NSSize(width: s.width * 2, height: s.height * 2))
-        let line = "\(heading) \(title)\(lines.isEmpty ? "" : ": " + lines.joined(separator: " ")) (Minecraft Claude Code Mod)"
-        let picker = NSSharingServicePicker(items: [picture, line])
+        let picker = NSSharingServicePicker(items: [picture])
         picker.delegate = self
         sharing = true
         app.activate(ignoringOtherApps: true)
