@@ -2,7 +2,7 @@
 
 **Claude Code, played as Minecraft survival.** Your usage limit is your hearts. The context window is your hunger. Every token is XP. Hit your limit and you die; compact a chat and you eat a golden apple; ship a pull request and an advancement slides into the corner.
 
-![Minecraft Claude Code Mod: hearts for your usage limit, hunger for your context, XP for every token, and a hotbar of four screens](docs/banner.png)
+![Claude Code with the HUD above the prompt: hearts, hunger, XP and the hotbar](docs/hud.png)
 
 ## Install
 
@@ -21,8 +21,6 @@ Needs **macOS 12+** (Apple Silicon or Intel) and the **Claude Code desktop app**
 ## What you get
 
 **The HUD**, above the prompt. Hover it for the figures.
-
-![The HUD and hotbar above the prompt in Claude Code](docs/hud.png)
 
 | | |
 |---|---|
@@ -47,7 +45,7 @@ Needs **macOS 12+** (Apple Silicon or Intel) and the **Claude Code desktop app**
 
 **The jukebox** plays every music disc and the whole soundtrack, and keeps playing after you close it. It reads them from your Minecraft install if you have one, and otherwise fetches each track from Mojang's servers the first time it plays. **The parrot** sits on your desktop, watches your pointer, and dances while the jukebox plays.
 
-![The jukebox](docs/jukebox.png)
+![The jukebox, with the parrot on the desktop](docs/jukebox.png)
 
 ## Commands
 

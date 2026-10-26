@@ -531,7 +531,7 @@ case "music":
     // Posting is asynchronous: give the notification a moment to leave.
     RunLoop.current.run(until: Date().addingTimeInterval(0.2))
     exit(0)
-case "advancements", "options", "jukebox", "guide", "death", "poster":
+case "advancements", "options", "jukebox", "guide", "death":
     window.ignoresMouseEvents = false
     window.acceptsMouseMovedEvents = true
     interactive = true
@@ -592,6 +592,14 @@ if let out = ProcessInfo.processInfo.environment["MC_SNAPSHOT"] {
             ctx.draw(backdrop, in: CGRect(x: 0, y: 0, width: W, height: H))
             ctx.interpolationQuality = .none
         }
+        // MC_PATCH="x,y,w,h,rrggbb;..." paints over spots of the background (a blur in a screenshot), in its pixels from the top left.
+        for patch in (ProcessInfo.processInfo.environment["MC_PATCH"] ?? "").split(separator: ";") {
+            let v = patch.split(separator: ",").map(String.init)
+            guard v.count == 5, let x = Double(v[0]), let y = Double(v[1]), let w = Double(v[2]), let h = Double(v[3]), let rgb = UInt32(v[4], radix: 16) else { continue }
+            ctx.setFillColor(red: CGFloat(rgb >> 16 & 0xFF) / 255, green: CGFloat(rgb >> 8 & 0xFF) / 255, blue: CGFloat(rgb & 0xFF) / 255, alpha: 1)
+            ctx.fill(CGRect(x: x, y: Double(H) - y - h, width: w, height: h))
+        }
+        ctx.saveGState()
         ctx.translateBy(x: 0, y: CGFloat(H)); ctx.scaleBy(x: 1, y: -1)
         ctx.scaleBy(x: view.gui, y: view.gui)
         pointer = at ?? pointer
@@ -602,6 +610,17 @@ if let out = ProcessInfo.processInfo.environment["MC_SNAPSHOT"] {
             if d.count == 2 { scrolledX = CGFloat(d[0]); scrolled = CGFloat(d[1]) } else if let y = d.first { scrolled = CGFloat(y) }
         }
         view.scene.draw(ctx, t: Double(n) * 0.05 + (Double(ProcessInfo.processInfo.environment["MC_T"] ?? "") ?? 2), w: CGFloat(W) / view.gui, h: CGFloat(H) / view.gui)
+        ctx.restoreGState()
+        // MC_STICKER="file.png,x,y,w;..." lays images over the screen (the parrot, whose window is above it), in pixels from the top left.
+        for sticker in (ProcessInfo.processInfo.environment["MC_STICKER"] ?? "").split(separator: ";") {
+            let v = sticker.split(separator: ",").map(String.init)
+            guard v.count == 4, let x = Double(v[1]), let y = Double(v[2]), let w = Double(v[3]),
+                  let source = CGImageSourceCreateWithURL(URL(fileURLWithPath: v[0]) as CFURL, nil), let img = CGImageSourceCreateImageAtIndex(source, 0, nil) else { continue }
+            let h = w * Double(img.height) / Double(img.width)
+            ctx.interpolationQuality = .high
+            ctx.draw(img, in: CGRect(x: x, y: Double(H) - y - h, width: w, height: h))
+            ctx.interpolationQuality = .none
+        }
         shot = ctx.makeImage()
     }
     if let shot, let dest = CGImageDestinationCreateWithURL(URL(fileURLWithPath: out) as CFURL, "public.png" as CFString, 1, nil) {

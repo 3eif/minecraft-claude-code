@@ -75,7 +75,7 @@ func momentScene(_ m: [String], gui: CGFloat, on display: NSScreen = screen) -> 
     case "advancement", "tip":
         let tip = m.first == "tip"
         return ToastScene(type: tip ? "tip" : arg(1) ?? "task", title: arg(2) ?? "Test Driven", iconName: arg(3) ?? "emerald",
-                          desc: arg(4) ?? "", top: (display.frame.maxY - display.visibleFrame.maxY) / gui)
+                          desc: arg(4) ?? "", top: ProcessInfo.processInfo.environment["MC_TOAST_TOP"].flatMap { Double($0) }.map { CGFloat($0) } ?? (display.frame.maxY - display.visibleFrame.maxY) / gui)
     default: return nil
     }
 }
@@ -91,7 +91,6 @@ func makeScreen(_ mode: String, _ json: String) -> Scene? {
     case "jukebox": return JukeboxScene(json)
     case "guide": return GuideScene(json)
     case "options": return OptionsScene(json)
-    case "poster": return PosterScene(json)
     default: return nil
     }
 }
