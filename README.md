@@ -4,8 +4,6 @@
 
 ![Hearts, hunger, XP and the hotbar above the prompt in Claude Code](docs/hud.png)
 
-It's a silly idea, built properly: the game's own sprites, sounds, fonts and timings, 113 advancements, a jukebox, and a 3D parrot that dances on your desktop.
-
 ## Install
 
 ```bash
@@ -18,7 +16,7 @@ claude plugin install minecraft-hud@minecraft-hud
 
 Start a new chat. A four-page guide opens the first time (`/minecraft help` brings it back).
 
-Needs **macOS 12+** (Apple Silicon or Intel) and the **Claude Code desktop app** for the pixel HUD; in a terminal you get a one-line HUD, and the full-screen moments and parrot still work. The jukebox also wants **Minecraft Java Edition** (launched once) and **ffmpeg** (`brew install ffmpeg`).
+Needs **macOS 12+** (Apple Silicon or Intel) and the **Claude Code desktop app** for the pixel HUD; in a terminal you get a one-line HUD, and the full-screen moments and parrot still work. Nothing else to install.
 
 ## What you get
 
@@ -45,7 +43,7 @@ Needs **macOS 12+** (Apple Silicon or Intel) and the **Claude Code desktop app**
 
 ![The advancement tree, a tooltip showing when it was earned](docs/advancements.png)
 
-**The jukebox** plays every music disc and the soundtrack from your own Minecraft install, and keeps playing after you close it. **The parrot** sits on your desktop, watches your pointer, and dances while the jukebox plays.
+**The jukebox** plays every music disc and the whole soundtrack, and keeps playing after you close it. It reads them from your Minecraft install if you have one, and otherwise fetches each track from Mojang's servers the first time it plays. **The parrot** sits on your desktop, watches your pointer, and dances while the jukebox plays.
 
 ![The jukebox](docs/jukebox.png)
 
@@ -93,7 +91,7 @@ Want to build it yourself? `overlay/build.sh` (needs Xcode's command-line tools)
 
 ## Your data
 
-Nothing leaves your Mac. Progress, XP and settings live in Claude Code's plugin storage, with a copy in `~/Library/Application Support/minecraft-hud/backup.json` (refreshed daily and on every advancement). If a reinstall, or installing from another marketplace, starts the mod empty, your progress comes back from that copy. Restarts, updates and switching Claude accounts keep everything; advancements belong to this Mac, not an account.
+Nothing about you leaves your Mac; the only network use is the jukebox fetching music from Mojang when Minecraft isn't installed. Progress, XP and settings live in Claude Code's plugin storage, with a copy in `~/Library/Application Support/minecraft-hud/backup.json` (refreshed daily and on every advancement). If a reinstall, or installing from another marketplace, starts the mod empty, your progress comes back from that copy. Restarts, updates and switching Claude accounts keep everything; advancements belong to this Mac, not an account.
 
 ## Uninstall
 
@@ -101,7 +99,7 @@ Nothing leaves your Mac. Progress, XP and settings live in Claude Code's plugin 
 claude plugin uninstall minecraft-hud@minecraft-hud
 ```
 
-To remove what it keeps too:
+To remove what it keeps too (the music it fetched lives in the cache):
 
 ```bash
 rm -rf ~/Library/Caches/minecraft-hud ~/Library/Application\ Support/minecraft-hud
@@ -114,4 +112,4 @@ rm -rf ~/Library/Caches/minecraft-hud ~/Library/Application\ Support/minecraft-h
 
 ## Disclaimer
 
-Not an official Minecraft product. Not approved by or associated with Mojang or Microsoft. Not an official Anthropic product either. Minecraft's textures and sounds are Mojang's; the music is played from your own Minecraft install and isn't included.
+Not an official Minecraft product. Not approved by or associated with Mojang or Microsoft. Not an official Anthropic product either. Minecraft's textures and sounds are Mojang's. The music isn't included: it's read from your Minecraft install or fetched from Mojang's own servers.

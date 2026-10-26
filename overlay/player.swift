@@ -5,36 +5,42 @@
 //   MCOverlay <assetsDir> player [command]   the background player (one at a time)
 //   MCOverlay <assetsDir> music <command>    tells the player: toggle | next | prev | stop
 //
-// The music is the person's own copy: it is read from their Minecraft install
-// (the launcher's assets folder) and nothing is bundled here. The game ships
-// Ogg Vorbis, which macOS does not play, so each track is converted with
-// ffmpeg to a temporary file as it comes up and that file is removed after.
+// The music is read from the person's Minecraft install where there is one, and
+// otherwise fetched from Mojang's servers as each track first plays; nothing is
+// bundled here (music.swift). Each track is decoded to a temporary file as it
+// comes up, and that file is removed after.
 
 import AppKit
 import AVFoundation
 
-struct Track { let path: String, title: String, icon: String }
+/// A track: where its file is (or will be, once fetched), and where to fetch it from when it is not there.
+struct Track { let path: String, title: String, icon: String; var url: String? = nil }
 struct Album { let name: String, icon: String, tracks: [Track] }
 
 // MARK: what there is to play
 
-/// The discs and the soundtrack, from the newest asset index of the local install.
+/// The discs and the soundtrack, from the newest asset index of the local install,
+/// or the one fetched from Mojang when there is no install (empty until it is).
 func musicLibrary() -> (discs: [Track], albums: [Album]) {
     let root = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/minecraft/assets")
     let indexes = (try? FileManager.default.contentsOfDirectory(atPath: root.appendingPathComponent("indexes").path)) ?? []
     let newest = indexes.compactMap { name -> (Int, String)? in Int(name.replacingOccurrences(of: ".json", with: "")).map { ($0, name) } }.max { $0.0 < $1.0 }?.1
-    guard let newest, let data = try? Data(contentsOf: root.appendingPathComponent("indexes/\(newest)")),
-          let objects = ((try? JSONSerialization.jsonObject(with: data)) as? [String: Any])?["objects"] as? [String: [String: Any]] else { return ([], []) }
-    func file(_ key: String) -> String? {
+    let installed = newest.flatMap { try? Data(contentsOf: root.appendingPathComponent("indexes/\($0)")) }
+        .flatMap { ((try? JSONSerialization.jsonObject(with: $0)) as? [String: Any])?["objects"] as? [String: [String: Any]] }
+    guard let objects = installed ?? downloadedIndex() else { return ([], []) }
+    // The install's copy when it has one; otherwise the cache's, fetched from Mojang the first time it plays.
+    func track(_ key: String, _ title: String, _ icon: String) -> Track? {
         guard let hash = objects[key]?["hash"] as? String else { return nil }
-        let path = root.appendingPathComponent("objects/\(hash.prefix(2))/\(hash)").path
-        return FileManager.default.fileExists(atPath: path) ? path : nil
+        let local = root.appendingPathComponent("objects/\(hash.prefix(2))/\(hash)").path
+        if FileManager.default.fileExists(atPath: local) { return Track(path: local, title: title, icon: icon) }
+        return Track(path: musicCache.appendingPathComponent("objects/\(hash).ogg").path, title: title, icon: icon,
+                     url: "https://resources.download.minecraft.net/\(hash.prefix(2))/\(hash)")
     }
     // The discs, in the game's order, with the titles its language file gives them.
     let listed = ((try? JSONSerialization.jsonObject(with: (try? Data(contentsOf: assets.appendingPathComponent("music.json"))) ?? Data())) as? [[String: String]]) ?? []
     let discs = listed.compactMap { disc -> Track? in
-        guard let id = disc["id"], let path = file("minecraft/sounds/records/\(id).ogg") else { return nil }
-        return Track(path: path, title: disc["title"] ?? id, icon: "music_disc_\(id)")
+        guard let id = disc["id"] else { return nil }
+        return track("minecraft/sounds/records/\(id).ogg", disc["title"] ?? id, "music_disc_\(id)")
     }
     // The soundtrack has no titles in the game's files. The classics are named as their albums name
     // them; the newer tracks' files already carry their names.
@@ -63,7 +69,7 @@ func musicLibrary() -> (discs: [Track], albums: [Album]) {
     let music = objects.keys.filter { $0.hasPrefix("minecraft/sounds/music/") }.sorted()
     func album(_ name: String, _ icon: String, _ belongs: (String) -> Bool) -> Album {
         Album(name: name, icon: icon, tracks: music.filter { belongs(String($0.dropFirst("minecraft/sounds/music/".count))) }.compactMap { key in
-            file(key).map { Track(path: $0, title: named(key), icon: icon) }
+            track(key, named(key), icon)
         }.sorted { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending })
     }
     let albums = [
@@ -165,8 +171,9 @@ final class Player: NSObject, AVAudioPlayerDelegate {
     var problem = ""
     var banner: NSWindow?
     var bannerView: NowPlayingView?
-    let temp = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("minecraft-hud-track-\(getpid()).m4a")
-    let ffmpeg = ["/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg", "/usr/bin/ffmpeg"].first { FileManager.default.isExecutableFile(atPath: $0) }
+    /// The decoded track playing now; each has a file of its own, so a skip never writes over one being read.
+    var temp: URL? = nil
+    func tempFile(_ n: Int) -> URL { URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("minecraft-hud-track-\(getpid())-\(n).m4a") }
 
     func handle(_ json: String) {
         let command = spec(json)
@@ -174,7 +181,7 @@ final class Player: NSObject, AVAudioPlayerDelegate {
         case "play":
             queue = (command["tracks"] as? [[String: String]] ?? []).compactMap { t in
                 guard let path = t["path"] else { return nil }
-                return Track(path: path, title: t["title"] ?? "", icon: t["icon"] ?? "")
+                return Track(path: path, title: t["title"] ?? "", icon: t["icon"] ?? "", url: t["url"])
             }
             index = command["index"] as? Int ?? 0
             loop = command["loop"] as? Bool ?? false
@@ -209,37 +216,40 @@ final class Player: NSObject, AVAudioPlayerDelegate {
         start()
     }
 
-    /// Converts the track at `index`, then plays it. A later call overtakes one still converting.
-    func start(encoder: String = "aac_at") {
+    /// Fetches the track at `index` if it must, decodes it, then plays it. A later call overtakes one still under way.
+    func start() {
         guard queue.indices.contains(index) else { quit(); return }
-        guard let ffmpeg else { problem = "ffmpeg is needed to play the game's music (brew install ffmpeg)"; write(); DispatchQueue.main.asyncAfter(deadline: .now() + 8) { self.quit() }; return }
         generation += 1
-        let mine = generation, track = queue[index]
+        let mine = generation, track = queue[index], dest = tempFile(mine)
         audio?.stop()
         audio = nil
         paused = false
         problem = ""
-        let convert = Process()
-        convert.executableURL = URL(fileURLWithPath: ffmpeg)
-        // The system's encoder is several times faster than ffmpeg's own; not every build has it.
-        convert.arguments = ["-loglevel", "error", "-y", "-i", track.path, "-c:a", encoder, "-b:a", "192k", temp.path]
-        convert.standardOutput = FileHandle.nullDevice
-        convert.standardError = FileHandle.nullDevice
-        convert.terminationHandler = { done in
-            DispatchQueue.main.async {
-                guard mine == self.generation else { return }
-                if done.terminationStatus != 0, encoder == "aac_at" { self.start(encoder: "aac"); return }
-                guard done.terminationStatus == 0, let made = try? AVAudioPlayer(contentsOf: self.temp) else { self.step(1); return }
-                made.delegate = self
-                made.volume = Float(jukeboxVolume)
-                made.play()
-                self.audio = made
-                if self.announce { self.showBanner("Now Playing: \(clean(track.title))") }
+        write()
+        fetchTrack(track) { path in
+            guard mine == self.generation else { return }
+            guard let path else {
+                self.problem = "This track could not be fetched from Mojang's servers."
                 self.write()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 4) { if mine == self.generation { self.step(1) } }
+                return
+            }
+            DispatchQueue.global().async {
+                let ok = decodeVorbis(path, to: dest)
+                DispatchQueue.main.async {
+                    guard mine == self.generation else { try? FileManager.default.removeItem(at: dest); return }
+                    guard ok, let made = try? AVAudioPlayer(contentsOf: dest) else { self.step(1); return }
+                    if let old = self.temp { try? FileManager.default.removeItem(at: old) }
+                    self.temp = dest
+                    made.delegate = self
+                    made.volume = Float(jukeboxVolume)
+                    made.play()
+                    self.audio = made
+                    if self.announce { self.showBanner("Now Playing: \(clean(track.title))") }
+                    self.write()
+                }
             }
         }
-        do { try convert.run() } catch { step(1) }
-        write()
     }
 
     func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) { step(1) }
@@ -284,7 +294,7 @@ final class Player: NSObject, AVAudioPlayerDelegate {
 
     func quit() {
         audio?.stop()
-        try? FileManager.default.removeItem(at: temp)
+        if let temp { try? FileManager.default.removeItem(at: temp) }
         try? FileManager.default.removeItem(at: playerState)
         exit(0)
     }
@@ -343,7 +353,8 @@ func clock(_ seconds: Double) -> String {
 
 final class JukeboxScene: Scene {
     struct Note { var x: CGFloat, born: Double, hue: CGFloat }
-    let library = musicLibrary()
+    var library = musicLibrary()
+    var indexFailed = false
     let announce: Bool
     var state: [String: Any] = [:]
     var readAt = -1.0
@@ -358,7 +369,15 @@ final class JukeboxScene: Scene {
     var scroll: CGFloat = 0
     var finished = false
 
-    init(_ json: String) { announce = spec(json)["announce"] as? Bool ?? true }
+    init(_ json: String) {
+        announce = spec(json)["announce"] as? Bool ?? true
+        // No install and nothing fetched yet: the list comes from Mojang, in the background.
+        if library.discs.isEmpty, library.albums.isEmpty {
+            fetchIndex { [weak self] ok in
+                if ok { self?.library = musicLibrary() } else { self?.indexFailed = true }
+            }
+        }
+    }
 
     func send(_ command: [String: Any], _ t: Double) {
         tellPlayer(command)
@@ -366,7 +385,7 @@ final class JukeboxScene: Scene {
     }
 
     func play(_ tracks: [Track], index: Int, loop: Bool, album: String, _ t: Double) {
-        send(["cmd": "play", "tracks": tracks.map { ["path": $0.path, "title": $0.title, "icon": $0.icon] }, "index": index, "loop": loop, "announce": announce, "album": album], t)
+        send(["cmd": "play", "tracks": tracks.map { t in ["path": t.path, "title": t.title, "icon": t.icon].merging(t.url.map { ["url": $0] } ?? [:]) { a, _ in a } }, "index": index, "loop": loop, "announce": announce, "album": album], t)
         state = ["title": tracks[index].title, "icon": tracks[index].icon, "album": album, "paused": false, "loading": true, "position": 0.0, "duration": 0.0]
         played += 1
         discs.insert(tracks[index].icon)
@@ -527,7 +546,7 @@ final class JukeboxScene: Scene {
             }
         }
         if library.discs.isEmpty, library.albums.isEmpty {
-            centered(ctx, "No Minecraft install was found to read the music from.", w / 2, T + H + 8, 0xFFFFFF)
+            centered(ctx, indexFailed ? "Mojang's servers could not be reached for the music." : "Getting the music list from Mojang...", w / 2, T + H + 8, 0xFFFFFF)
         }
 
         if let p = pointer, !tip.isEmpty { tooltip(ctx, tip, p, w, h) }

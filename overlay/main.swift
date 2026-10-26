@@ -531,7 +531,7 @@ case "music":
     // Posting is asynchronous: give the notification a moment to leave.
     RunLoop.current.run(until: Date().addingTimeInterval(0.2))
     exit(0)
-case "advancements", "options", "jukebox", "guide", "death", "band":
+case "advancements", "options", "jukebox", "guide", "death":
     window.ignoresMouseEvents = false
     window.acceptsMouseMovedEvents = true
     interactive = true
@@ -546,6 +546,9 @@ case "parrot-snapshot":
         try? png.write(to: URL(fileURLWithPath: args[3]))
     }
     exit(0)
+case "decode":
+    // MCOverlay <assets> decode <in.ogg> <out.m4a>: one track decoded, for checking the decoder.
+    exit(args.count > 4 && decodeVorbis(args[3], to: URL(fileURLWithPath: args[4])) ? 0 : 1)
 case "serve":
     startServer()
     exit(0)
