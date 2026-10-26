@@ -1,45 +1,10 @@
-# Minecraft HUD for Claude Code
+# Minecraft Claude Code Mod
 
-The Minecraft Claude Code Mod: Claude Code as Minecraft survival mode. Your usage limit is your hearts, the context window is your hunger bar, and every token you spend is XP.
+**Claude Code, played as Minecraft survival.** Your usage limit is your hearts. The context window is your hunger. Every token is XP. Hit your limit and you die; compact a chat and you eat a golden apple; ship a pull request and an advancement slides into the corner.
 
-It's a silly concept. It's also a real plugin.
+![The HUD: hearts for your usage limit, hunger for your context, XP for your tokens](docs/bars.png)
 
-## What it does
-
-**The HUD** sits above the prompt in the Claude Code desktop app:
-
-| In the game | In Claude Code |
-|---|---|
-| Hearts | Your usage limit: the 5-hour or weekly limit, whichever you've used more of. Each heart is 10%. |
-| Hunger | The context window. It empties as the chat fills. |
-| XP | Tokens, across all your chats. The first levels come fast; later ones take a while. |
-
-**Moments**, played over the whole screen with the game's sounds:
-
-- **Damage:** the hearts flash and shake as you use your limit.
-- **Golden apple:** eaten when a chat compacts, refilling hunger.
-- **The death screen:** when you hit your limit. "Claude was slain by the 5-hour limit." In bypass-permissions mode it's hardcore: "Game Over!"
-- **Totem of Undying:** when your weekly limit resets. It plays once, in one chat, however many you have open.
-- **Level up:** XP orbs and the level-up chime.
-- **A villager's "hmm":** when Claude stops to ask you a question.
-
-**Advancements:** 113 of them in six tabs: Building (edits, commits, pull requests), Combat (tests), Exploration (tools, the terminal, subagents, the web), Survival (your limit and your context), Habits (prompts, tokens, levels, streaks) and The Deep Dark, the rare ones, which opens at 50 earned. Toasts stack in the corner like the game's and stay ten seconds (longer while the pointer is on one); Share sends a picture of one through the Mac's share menu. In the tree, each says when you earned it, and a star marks what is new since you last looked. Each chain starts easy and runs deep: its last tiers take a heavy user months. Some are secret.
-
-**The hotbar:** click a slot to open its screen.
-
-| Slot | What it does |
-|---|---|
-| Advancements | The advancement tree. |
-| Jukebox | Play the game's music discs and soundtrack, from your own Minecraft install. Click or drag along the track to seek. |
-| Parrot | A 3D parrot on your desktop. It watches your pointer and dances when the Jukebox plays. Right-click it for a new coat. |
-| Settings | Volume, sound types, and which animations play. |
-
-## Requirements
-
-- **macOS 12 or later.** Apple Silicon or Intel.
-- **The Claude Code desktop app** for the pixel HUD and hotbar. In the terminal you get a one-line summary, and the full-screen moments and the parrot still work.
-- **Minecraft Java Edition,** installed and launched at least once, for the Jukebox's music. Everything else works without it.
-- **ffmpeg,** also for the Jukebox: `brew install ffmpeg`.
+It's a silly idea, built properly: the game's own sprites, sounds, fonts and timings, 113 advancements, a jukebox, and a 3D parrot that dances on your desktop.
 
 ## Install
 
@@ -51,30 +16,84 @@ claude plugin marketplace add 3eif/minecraft-hud
 claude plugin install minecraft-hud@minecraft-hud
 ```
 
-Then start a new chat. A short guide opens the first time; type `/minecraft help` to see it again.
+Start a new chat. A four-page guide opens the first time (`/minecraft help` brings it back).
 
-Already have it from another marketplace? Installing from this one starts a new store, but your progress comes back from its backup the first time a chat starts.
+Needs **macOS 12+** (Apple Silicon or Intel) and the **Claude Code desktop app** for the pixel HUD; in a terminal you get a one-line HUD, and the full-screen moments and parrot still work. The jukebox also wants **Minecraft Java Edition** (launched once) and **ffmpeg** (`brew install ffmpeg`).
+
+## What you get
+
+**The HUD**, above the prompt. Hover it for the figures.
+
+| | |
+|---|---|
+| ❤️ **Hearts** | Your usage limit: the 5-hour or the weekly, whichever you've used more of. Each heart is 10%. |
+| 🍗 **Hunger** | The context window, emptying as the chat fills. |
+| 🟩 **XP** | Every token you use, across all chats. Level 50 is about a year of heavy use. |
+
+**The hotbar**, beside it: **Advancements**, **Jukebox**, **Parrot** and **Settings**, one click each.
+
+**Moments**, over the whole screen, with the game's sounds:
+
+- **Damage** as your limit drains: the hearts flash and shake.
+- **The death screen** when you hit it: *"Claude was slain by the weekly limit."* In bypass-permissions mode, it's hardcore.
+- **Totem of Undying** when your weekly limit resets: once, small, quiet.
+- **Golden apple** when a chat compacts, the **level-up** chime, a **villager's "hmm"** when Claude asks you something.
+
+**113 advancements** in six tabs (Building, Combat, Exploration, Survival, Habits, and The Deep Dark, which opens at 50). They start easy and run deep: the last tiers take a heavy user months, and some are secret. Each toast stays ten seconds and has a **Share** button; the tree shows when you earned each one and stars what's new.
+
+![An advancement toast with its Share button](docs/toast.png)
+
+![The advancement tree, a tooltip showing when it was earned](docs/advancements.png)
+
+**The jukebox** plays every music disc and the soundtrack from your own Minecraft install, and keeps playing after you close it. **The parrot** sits on your desktop, watches your pointer, and dances while the jukebox plays.
+
+![The jukebox](docs/jukebox.png)
 
 ## Commands
 
-Everything is under `/minecraft`:
+Everything lives under `/minecraft`.
 
-| Command | What it does |
+| Command | |
 |---|---|
-| `/minecraft advancements`, `music`, `parrot`, `settings` | Open a hotbar screen |
-| `/minecraft music pause`, `next`, `prev`, `stop` | Control the Jukebox |
-| `/minecraft death`, `totem`, `damage`, `apple`, `advancement`, `xp` | Preview a moment |
-| `/minecraft live` | Return to your real figures after a preview |
-| `/minecraft volume 50`, `mute`, `unmute` | Sound |
-| `/minecraft fullscreen on\|off`, `hotbar on\|off` | Turn the full-screen moments or the hotbar off. `/minecraft hotbar on` brings a hidden hotbar back. |
-| `/minecraft clear` | Reset your XP. Advancements are kept. |
-| `/minecraft reset all confirm` | Start over: every advancement, your XP and the backup. Settings are kept. |
+| `/minecraft advancements` · `music` · `parrot` · `settings` | Open a hotbar screen |
+| `/minecraft help` | The guide |
+| `/minecraft music pause` · `next` · `prev` · `stop` | Control the jukebox without opening it |
+| `/minecraft volume 50` · `mute` · `unmute` | Sound |
+| `/minecraft hotbar on\|off` · `fullscreen on\|off` | Hide the hotbar, or keep moments inside the app |
+| `/minecraft death` · `totem` · `damage` · `apple` · `xp` · `advancement` | Preview a moment |
+| `/minecraft live` | Back to your real figures after a preview |
+| `/minecraft clear` | Reset XP; advancements stay |
+| `/minecraft reset all confirm` | Start over completely (settings stay) |
 
-## Privacy
+## Shortcuts
 
-Everything stays on your Mac. The mod reads your usage figures and the current chat from Claude Code, and sends nothing anywhere.
+| Where | |
+|---|---|
+| **Any screen** | `Esc` closes it; so does a click outside the tree or the jukebox |
+| **Advancements** | Drag, scroll or swipe to move around; `L` closes it, as in the game |
+| **Jukebox** | `Space` pauses; click or drag the track to seek; `Delete` leaves an album; `E` closes it |
+| **Guide** | `→` / `Return` next, `←` back |
+| **Settings** | `Return` or `Esc` goes back a page |
+| **Toasts** | Hover to keep one up; **Share** sends a picture of it |
+| **Parrot** | Drag it anywhere; click and it hops; right-click for a new coat |
 
-What it keeps (XP, advancements, settings, the parrot's spot) lives in Claude Code's plugin storage and `~/Library/Caches/minecraft-hud`, shared by every open chat: a setting changed in one shows in the others within a few seconds. Your progress is also copied, daily and whenever you earn an advancement, to `~/Library/Application Support/minecraft-hud/backup.json`, and comes back from there if a reinstall starts the mod with nothing.
+## How it works
+
+The mod is two parts.
+
+**The hooks** (`hooks/`) run inside Claude Code. They draw the HUD and hotbar, read your usage, context and tokens as Claude Code reports them, count what Claude does (edits, commits, tests, tools), and award advancements. Every open chat runs its own copy and they share one record, so a setting changed in one chat shows in the others, and a moment like the totem plays once however many chats you have open.
+
+**The helper** (`overlay/MCOverlay`) is a small native Mac program, written in Swift, that draws everything outside the app window: the screens, the full-screen moments, the toasts, the parrot. There is nothing to install for it separately:
+
+- It ships **prebuilt** in the plugin, one universal binary for Apple Silicon and Intel. `claude plugin install` downloads it with the rest of the plugin into `~/.claude/plugins/cache/`.
+- It isn't placed in Applications, has no Dock icon, adds no login item, and asks for no permissions. The hooks start it the first time a chat needs it.
+- It stays running in the background so screens open instantly, idling at well under 1% CPU. It quits when Claude Code quits, after half a day unused, or when a plugin update replaces it.
+
+Want to build it yourself? `overlay/build.sh` (needs Xcode's command-line tools).
+
+## Your data
+
+Nothing leaves your Mac. Progress, XP and settings live in Claude Code's plugin storage, with a copy in `~/Library/Application Support/minecraft-hud/backup.json` (refreshed daily and on every advancement). If a reinstall, or installing from another marketplace, starts the mod empty, your progress comes back from that copy. Restarts, updates and switching Claude accounts keep everything; advancements belong to this Mac, not an account.
 
 ## Uninstall
 
@@ -82,35 +101,17 @@ What it keeps (XP, advancements, settings, the parrot's spot) lives in Claude Co
 claude plugin uninstall minecraft-hud@minecraft-hud
 ```
 
-```bash
-rm -rf ~/Library/Caches/minecraft-hud
-```
-
-A small background helper keeps the screens fast. It quits on its own after a while unused, or you can stop it now:
+To remove what it keeps too:
 
 ```bash
-pkill -f MCOverlay
-```
-
-## How it works
-
-The plugin's hooks draw the HUD in Claude Code and track your usage, context and tokens. The screens, the full-screen moments and the parrot are drawn by `overlay/MCOverlay`, a small native helper written in Swift that stays running in the background so screens open in a few milliseconds. The parrot is the game's own model, built in 3D with SceneKit.
-
-To build the helper yourself (needs Xcode's command-line tools):
-
-```bash
-overlay/build.sh
+rm -rf ~/Library/Caches/minecraft-hud ~/Library/Application\ Support/minecraft-hud
 ```
 
 ## Notes
 
-- Built for the Claude Code version it was made with. The hotbar uses a layout trick (invisible buttons over the slot pictures) that a future app update could break.
-- Tested on one Mac so far. Issues welcome.
+- The hotbar's click areas are buttons laid over pictures, a layout a future Claude Code update could break. Issues welcome.
+- Tests: `claude plugin test .`
 
 ## Disclaimer
 
-NOT AN OFFICIAL MINECRAFT PRODUCT. NOT APPROVED BY OR ASSOCIATED WITH MOJANG OR MICROSOFT. Not affiliated with or endorsed by Anthropic.
-
-Not an official Minecraft product. Not approved by or associated with Mojang or Microsoft. Not an official Anthropic product either.
-
-Minecraft's textures, sounds and music are the property of Mojang. The music is played from your own Minecraft install and is not included here.
+Not an official Minecraft product. Not approved by or associated with Mojang or Microsoft. Not an official Anthropic product either. Minecraft's textures and sounds are Mojang's; the music is played from your own Minecraft install and isn't included.
