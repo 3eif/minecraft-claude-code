@@ -440,7 +440,11 @@ final class JukeboxScene: Scene {
         if !problem.isEmpty {
             for (i, line) in wrap(problem, 92).prefix(3).enumerated() { text(ctx, line, tx, T + 20 + CGFloat(i * 9), 0xAA0000) }
         } else if playing {
-            for (i, line) in wrap(title, 92).prefix(2).enumerated() { text(ctx, line, tx, T + 20 + CGFloat(i * 9), 0x404040) }
+            let lines = Array(wrap(title, 92).prefix(2))
+            for (i, line) in lines.enumerated() { text(ctx, line, tx, T + 20 + CGFloat(i * 9), 0x404040) }
+            // Which album it is from, where the title leaves room: the album stays in the Soundtrack row, marked.
+            let from = clean(state["album"] as? String ?? "")
+            if !from.isEmpty, lines.count == 1 { text(ctx, from, tx, T + 29, 0x707070) }
             let duration = state["duration"] as? Double ?? 0
             // The bar seeks: press anywhere along it, drag, and the track jumps there on release.
             let track = CGRect(x: tx, y: T + 38, width: 92, height: 10)
@@ -540,11 +544,19 @@ final class JukeboxScene: Scene {
             sprite(ctx, "gui/sprites/container/slot.png", L + s.x - 1, T + s.y - 1)
             guard i < library.albums.count else { continue }
             let album = library.albums[i]
-            let inside = playing && state["album"] as? String == album.name
-            if !inside { item(ctx, album.icon, L + s.x, T + s.y) }
+            // An album playing stays in its slot, outlined in green, so it can still be opened to its tracks.
+            let now = playing && state["album"] as? String == album.name
+            item(ctx, album.icon, L + s.x, T + s.y)
+            if now {
+                for edge in [CGRect(x: s.x - 1, y: s.y - 1, width: 18, height: 1), CGRect(x: s.x - 1, y: s.y + 16, width: 18, height: 1),
+                             CGRect(x: s.x - 1, y: s.y, width: 1, height: 16), CGRect(x: s.x + 16, y: s.y, width: 1, height: 16)] {
+                    fill(ctx, edge.offsetBy(dx: L, dy: T), 0xFF55FF55)
+                }
+            }
             if over(s, L, T) {
                 fill(ctx, CGRect(x: L + s.x, y: T + s.y, width: 16, height: 16), 0x80FFFFFF)
-                tip = [(album.name, 0xFFFFFF), ("\(album.tracks.count) tracks", 0xAAAAAA), ("Click to choose one", 0x55FF55)]
+                if now { tip = [(album.name, 0xFFFFFF), ("Playing now", 0x55FF55), ("Click to see its tracks", 0xAAAAAA)] }
+                else { tip = [(album.name, 0xFFFFFF), ("\(album.tracks.count) tracks", 0xAAAAAA), ("Click to choose one", 0x55FF55)] }
                 if pressed != nil { openAlbum = i; scroll = 0; playSound("click", volume: 0.12) }
             }
         }
