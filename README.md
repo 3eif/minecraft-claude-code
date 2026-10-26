@@ -2,7 +2,7 @@
 
 **Claude Code, played as Minecraft survival.** Your usage limit is your hearts. The context window is your hunger. Every token is XP. Hit your limit and you die; compact a chat and you eat a golden apple; ship a pull request and an advancement slides into the corner.
 
-![Hearts, hunger, XP and the hotbar above the prompt in Claude Code](docs/hud.png)
+![Minecraft Claude Code Mod: hearts for your usage limit, hunger for your context, XP for every token, and a hotbar of four screens](docs/banner.png)
 
 ## Install
 
@@ -21,6 +21,8 @@ Needs **macOS 12+** (Apple Silicon or Intel) and the **Claude Code desktop app**
 ## What you get
 
 **The HUD**, above the prompt. Hover it for the figures.
+
+![The HUD and hotbar above the prompt in Claude Code](docs/hud.png)
 
 | | |
 |---|---|

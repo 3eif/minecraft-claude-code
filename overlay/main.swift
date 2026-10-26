@@ -531,7 +531,7 @@ case "music":
     // Posting is asynchronous: give the notification a moment to leave.
     RunLoop.current.run(until: Date().addingTimeInterval(0.2))
     exit(0)
-case "advancements", "options", "jukebox", "guide", "death":
+case "advancements", "options", "jukebox", "guide", "death", "poster":
     window.ignoresMouseEvents = false
     window.acceptsMouseMovedEvents = true
     interactive = true

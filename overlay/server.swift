@@ -91,6 +91,7 @@ func makeScreen(_ mode: String, _ json: String) -> Scene? {
     case "jukebox": return JukeboxScene(json)
     case "guide": return GuideScene(json)
     case "options": return OptionsScene(json)
+    case "poster": return PosterScene(json)
     default: return nil
     }
 }
