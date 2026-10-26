@@ -172,6 +172,8 @@ final class Player: NSObject, AVAudioPlayerDelegate {
     var paused = false
     var generation = 0
     var problem = ""
+    /// What the player is doing before a track plays: "fetching" it from Mojang, "decoding" it, or nothing.
+    var stage = ""
     var banner: NSWindow?
     var bannerView: NowPlayingView?
     /// The decoded track playing now; each has a file of its own, so a skip never writes over one being read.
@@ -229,6 +231,7 @@ final class Player: NSObject, AVAudioPlayerDelegate {
         audio = nil
         paused = false
         problem = ""
+        stage = FileManager.default.fileExists(atPath: track.path) ? "decoding" : "fetching"
         write()
         fetchTrack(track) { path in
             guard mine == self.generation else { return }
@@ -238,6 +241,8 @@ final class Player: NSObject, AVAudioPlayerDelegate {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 4) { if mine == self.generation { self.step(1) } }
                 return
             }
+            self.stage = "decoding"
+            self.write()
             DispatchQueue.global().async {
                 let ok = decodeVorbis(path, to: dest)
                 DispatchQueue.main.async {
@@ -249,6 +254,7 @@ final class Player: NSObject, AVAudioPlayerDelegate {
                     made.volume = Float(jukeboxVolume)
                     made.play()
                     self.audio = made
+                    self.stage = ""
                     self.nowPlaying()
                     if self.announce { self.showBanner("Now Playing: \(clean(track.title))") }
                     self.write()
@@ -293,7 +299,7 @@ final class Player: NSObject, AVAudioPlayerDelegate {
 
     func write() {
         let track = queue.indices.contains(index) ? queue[index] : nil
-        let state: [String: Any] = ["title": track?.title ?? "", "icon": track?.icon ?? "", "album": album, "paused": paused, "loading": audio == nil,
+        let state: [String: Any] = ["title": track?.title ?? "", "icon": track?.icon ?? "", "album": album, "paused": paused, "loading": audio == nil, "stage": stage,
                                     "position": audio?.currentTime ?? 0, "duration": audio?.duration ?? 0, "index": index, "count": queue.count, "problem": problem]
         if let data = try? JSONSerialization.data(withJSONObject: state) { try? data.write(to: playerState, options: .atomic) }
     }
@@ -393,7 +399,9 @@ final class JukeboxScene: Scene {
 
     func play(_ tracks: [Track], index: Int, loop: Bool, album: String, _ t: Double) {
         send(["cmd": "play", "tracks": tracks.map { t in ["path": t.path, "title": t.title, "icon": t.icon].merging(t.url.map { ["url": $0] } ?? [:]) { a, _ in a } }, "index": index, "loop": loop, "announce": announce, "album": album], t)
-        state = ["title": tracks[index].title, "icon": tracks[index].icon, "album": album, "paused": false, "loading": true, "position": 0.0, "duration": 0.0]
+        // Shown loading at once, before the player has answered.
+        let stage = FileManager.default.fileExists(atPath: tracks[index].path) ? "decoding" : "fetching"
+        state = ["title": tracks[index].title, "icon": tracks[index].icon, "album": album, "paused": false, "loading": true, "stage": stage, "position": 0.0, "duration": 0.0]
         played += 1
         discs.insert(tracks[index].icon)
         playSound("click", volume: 0.12)
@@ -462,12 +470,20 @@ final class JukeboxScene: Scene {
                 playSound("click", volume: 0.12)
             }
             let position = seeking.map { $0 * duration } ?? state["position"] as? Double ?? 0
+            let stage = state["stage"] as? String ?? ""
             fill(ctx, CGRect(x: tx, y: T + 42, width: 92, height: 3), 0xFF373737)
-            if duration > 0 { fill(ctx, CGRect(x: tx, y: T + 42, width: (92 * CGFloat(min(1, position / duration))).rounded(), height: 3), 0xFF80FF20) }
-            if duration > 0, seeking == nil, let p = pointer, track.contains(p) { tip = [("Jump to \(clock(along(p) * duration))", 0xFFFFFF)] }
-            let end = duration > 0 ? clock(duration) : "..."
-            text(ctx, clock(position), tx, T + 48, 0x404040)
-            text(ctx, end, tx + 92 - CGFloat(uiFont.width(end)), T + 48, 0x404040)
+            if !stage.isEmpty {
+                // A segment sliding back and forth, one pass a second, while the track is got ready.
+                let f = CGFloat((t * 1).truncatingRemainder(dividingBy: 2)), at = f < 1 ? f : 2 - f
+                fill(ctx, CGRect(x: tx + (at * 68).rounded(), y: T + 42, width: 24, height: 3), 0xFF80FF20)
+                text(ctx, stage == "fetching" ? "Downloading..." : "Preparing...", tx, T + 48, 0x707070)
+            } else {
+                if duration > 0 { fill(ctx, CGRect(x: tx, y: T + 42, width: (92 * CGFloat(min(1, position / duration))).rounded(), height: 3), 0xFF80FF20) }
+                if duration > 0, seeking == nil, let p = pointer, track.contains(p) { tip = [("Jump to \(clock(along(p) * duration))", 0xFFFFFF)] }
+                let end = duration > 0 ? clock(duration) : "..."
+                text(ctx, clock(position), tx, T + 48, 0x404040)
+                text(ctx, end, tx + 92 - CGFloat(uiFont.width(end)), T + 48, 0x404040)
+            }
         } else {
             text(ctx, "Empty.", tx, T + 20, 0x404040)
             for (i, line) in wrap("Click a disc to put it in.", 92).enumerated() { text(ctx, line, tx, T + 31 + CGFloat(i * 9), 0x707070) }
