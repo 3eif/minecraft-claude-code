@@ -18,11 +18,11 @@ Needs **macOS 12+** (Apple Silicon or Intel) and the **Claude Code desktop app**
 
 **The HUD**, above the prompt. Hover it for the figures.
 
-| | |
+| In the game | In Claude Code |
 |---|---|
-| ❤️ **Hearts** | Your usage limit: the 5-hour or the weekly, whichever you've used more of. Each heart is 10%. |
-| 🍗 **Hunger** | The context window, emptying as the chat fills. |
-| 🟩 **XP** | Every token you use, across all chats. Level 50 is about a year of heavy use. |
+| **Hearts** | Your usage limit: the 5-hour or the weekly, whichever you've used more of. Each heart is 10%. |
+| **Hunger** | The context window, emptying as the chat fills. |
+| **XP** | Every token you use, across all chats. Level 50 is about a year of heavy use. |
 
 **The hotbar**, beside it: **Advancements**, **Jukebox**, **Parrot** and **Settings**, one click each.
 
@@ -47,7 +47,7 @@ Needs **macOS 12+** (Apple Silicon or Intel) and the **Claude Code desktop app**
 
 Everything lives under `/minecraft`.
 
-| Command | |
+| Command | What it does |
 |---|---|
 | `/minecraft advancements` · `music` · `parrot` · `settings` | Open a hotbar screen |
 | `/minecraft help` | The guide |
@@ -61,7 +61,7 @@ Everything lives under `/minecraft`.
 
 ## Shortcuts
 
-| Where | |
+| Where | What to do |
 |---|---|
 | **Any screen** | `Esc` closes it; so does a click outside the tree or the jukebox |
 | **Advancements** | Drag, scroll or swipe to move around; `L` closes it, as in the game |
