@@ -475,8 +475,9 @@ default:
 }
 
 // MC_SNAPSHOT=<file.png> draws one frame to a file and quits, for checking a
-// screen without opening it. MC_POINTER="x,y" puts the pointer there, and
-// MC_CLICKS="x,y;x,y" clicks those points first, one frame each (GUI pixels).
+// screen without opening it. MC_POINTER="x,y" puts the pointer there,
+// MC_CLICKS="x,y;x,y" clicks those points first, one frame each (GUI pixels),
+// and MC_SCROLL scrolls on the last frame.
 if let out = ProcessInfo.processInfo.environment["MC_SNAPSHOT"] {
     let W = 1512, H = 982
     let point = { (s: String) -> CGPoint? in
@@ -496,6 +497,11 @@ if let out = ProcessInfo.processInfo.environment["MC_SNAPSHOT"] {
         ctx.scaleBy(x: view.gui, y: view.gui)
         pointer = at ?? pointer
         pressed = click ? at : nil
+        // MC_SCROLL="dy" (or "dx,dy") scrolls by that much on the last frame, as a trackpad would.
+        if n == frames.count - 1, let v = ProcessInfo.processInfo.environment["MC_SCROLL"] {
+            let d = v.split(separator: ",").compactMap { Double($0) }
+            if d.count == 2 { scrolledX = CGFloat(d[0]); scrolled = CGFloat(d[1]) } else if let y = d.first { scrolled = CGFloat(y) }
+        }
         view.scene.draw(ctx, t: Double(n) * 0.05 + (Double(ProcessInfo.processInfo.environment["MC_T"] ?? "") ?? 2), w: CGFloat(W) / view.gui, h: CGFloat(H) / view.gui)
         shot = ctx.makeImage()
     }

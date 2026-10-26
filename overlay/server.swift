@@ -22,6 +22,13 @@ let inbox: URL = {
     return dir
 }()
 
+/// Which file the helper is: its inode and when it was written. A rebuild or a
+/// reinstall changes both, though the path stays the same.
+func binaryStamp() -> String {
+    let at = try? FileManager.default.attributesOfItem(atPath: binPath)
+    return "\((at?[.systemFileNumber] as? Int) ?? 0):\(((at?[.modificationDate] as? Date)?.timeIntervalSince1970) ?? 0)"
+}
+
 /// A full-screen, see-through window above everything, on every Space.
 func overlayWindow() -> OverlayWindow {
     let window = OverlayWindow(contentRect: frame, styleMask: .borderless, backing: .buffered, defer: false)
@@ -208,6 +215,7 @@ final class Server {
     var hosts: [pid_t: DispatchSourceProcess] = [:]
     var everHosted = false
     let startedAt = Date()
+    let startedStamp = binaryStamp()
 
     /// Holds the lock for as long as the process lives, or quits if another server has it.
     func claim() {
@@ -276,8 +284,11 @@ final class Server {
                 if parts.count == 3, kill(pid_t(parts[0]), 0) == 0, parts[2] > Int(lastUsed.timeIntervalSince1970) { exit(0) }
             }
         }
-        // The helper was replaced or removed: this copy is no longer the mod's.
+        // The helper was replaced or removed: this copy is no longer the mod's. A
+        // replaced one keeps running its old code from memory, so it leaves once
+        // idle and the next screen starts the new one.
         if !FileManager.default.fileExists(atPath: binPath) { exit(0) }
+        if idle, binaryStamp() != startedStamp { exit(0) }
     }
 
     /// Watches a Claude process: the kernel says when it exits, nothing is polled.

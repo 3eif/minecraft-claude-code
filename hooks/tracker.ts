@@ -52,6 +52,14 @@ export function streak(days: readonly string[], today: number) {
 export function figure(p: Progress, counter: string, now: number) {
   if (counter === 'dayStreak') return streak(p.sets.days ?? [], now)
   if (counter === 'earned') return ADVANCEMENTS.filter(a => p.earned[a.id]).length
+  // A limit hit in a period that has since ended came back: counted from the deaths too,
+  // since the respawns were once missed when a new period's figures arrived first.
+  if (counter === 'respawns') {
+    const ended = (p.sets.deaths ?? []).map(w => w.split(':')[1] ?? '').filter(at => Number(at) > 0 && Number(at) <= now)
+    return new Set([...(p.sets.respawns ?? []), ...ended]).size
+  }
+  // Music discs alone: the soundtrack's albums were once counted with them.
+  if (counter === 'discsHeard') return (p.sets.discsHeard ?? []).filter(d => d.startsWith('music_disc_')).length
   if (counter === 'commitStreak') return streak(p.sets.commitDays ?? [], now)
   if (counter in p.max) return p.max[counter] ?? 0
   if (counter in p.sets) return p.sets[counter]?.length ?? 0

@@ -92,7 +92,7 @@ let chatTurns = 0
 let editsSinceTest = 0
 let failedSinceEdits = false
 const failing = new Set<string>()
-const turn = { edits: 0, passed: false, committed: false, shipped: false, agents: 0, tools: 0, added: 0, removed: 0, inserted: 0, deleted: 0, failing: 0, testFailed: false, failedAny: false, tokens: 0, earned: 0, kinds: new Set<string>() }
+const turn = { edits: 0, passed: false, committed: false, shipped: false, agents: 0, tools: 0, added: 0, removed: 0, inserted: 0, deleted: 0, failing: 0, testFailed: false, failedAny: false, tokens: 0, kinds: new Set<string>() }
 // What the secret advancements watch across a whole chat.
 const chatRun = { clean: 0, reverted: false, passedSince: false }
 const lineCount = (text: unknown) => (typeof text === 'string' && text ? text.split('\n').length : 0)
@@ -305,10 +305,10 @@ async function settle($: EngineInterface) {
   mine = blank()
   const first = next.sets.first?.[0]
   if (first && now - Date.parse(first) >= 365 * 86_400_000) pending.push('4.birthday')
-  // A billion tokens in one day; only today's tally is kept.
+  // Ten billion tokens in one day; only today's tally is kept.
   const today = `tokensOn:${day(now)}`
   for (const key of Object.keys(next.n)) if (key.startsWith('tokensOn:') && key !== today) delete next.n[key]
-  if ((next.n[today] ?? 0) >= 1_000_000) pending.push('4.overpowered')
+  if ((next.n[today] ?? 0) >= 10_000_000) pending.push('4.overpowered')
   const named = pending.map(id => ADVANCEMENTS.find(a => a.id === id)).filter(a => a !== undefined)
   pending = []
   const earned = [...new Set([...named, ...due(next, now)])].filter(a => !next.earned[a.id])
@@ -320,8 +320,6 @@ async function settle($: EngineInterface) {
   // A tab's first advancement only opens the tab: it is earned without a toast.
   // The rest show as the game shows them, stacked down the corner, each a beat
   // after the one above so their sounds do not land together.
-  turn.earned += fresh.filter(a => a.parent).length
-  if (turn.earned >= 3) award('5.revaulting')
   fresh
     .filter(a => a.parent)
     .forEach((a, i) => later($, i * 300, () => void overlay($, 1, ['advancement', a.frame, a.name, a.icon, a.desc])))
@@ -433,6 +431,35 @@ async function gainXP($: EngineInterface, tokens: number, real = true) {
   )
 }
 
+// How a limit period ended, for Postmortal, Saved by the Bell and Revaulting:
+// read from the record every chat keeps of the period the hearts show, when a
+// later one replaces it, so it counts once however many chats are open and
+// whether or not one was open at the reset itself.
+type Period = { resetAt: number; dead: boolean; health: number }
+let periodSaid = ''
+async function notePeriod($: EngineInterface, now: number, next: Period) {
+  const was = (await $.store.get('period')) as Period | undefined
+  if (was?.resetAt && next.resetAt > was.resetAt && now >= was.resetAt - 60_000 && (await claim($, `period:${was.resetAt}`))) {
+    if (was.dead) {
+      once('respawns', String(was.resetAt))
+      await $.store.set('cameBack', was.resetAt)
+    } else if (was.health > 0 && was.health <= 2) award('3.bell')
+    void settle($)
+  }
+  const said = JSON.stringify(next)
+  if (said !== periodSaid && (!was || next.resetAt >= was.resetAt)) {
+    periodSaid = said
+    await $.store.set('period', next)
+  }
+}
+
+// Revaulting: a prompt within a minute of a limit you hit coming back.
+async function backInTime($: EngineInterface, now: number) {
+  const period = (await $.store.get('period')) as Period | undefined
+  const back = Math.max(period?.dead ? period.resetAt : 0, Number((await $.store.get('cameBack')) ?? 0))
+  if (back && now >= back && now - back <= 60_000) award('5.revaulting')
+}
+
 // The hearts refill when the limit they show resets. The totem is not played
 // here: it is the weekly limit's moment alone (totemMoment).
 async function resetMoment($: EngineInterface, key: string) {
@@ -441,11 +468,6 @@ async function resetMoment($: EngineInterface, key: string) {
   if (/^\d+$/.test(key) && key !== String(s.resetAt)) return
   const now = await $.clock.now()
   s.lastReset = key
-  if (!key.startsWith('demo:')) {
-    if (s.dead) once('respawns', String(s.resetAt))
-    else if (s.health > 0 && s.health <= 2) award('3.bell')
-    later($, 2600, () => void settle($))
-  }
   s.dead = false
   s.health = 20
   s.lostFrom = 20
@@ -513,6 +535,7 @@ async function applyUsage($: EngineInterface, context: SessionContextUsage, limi
   s.starving = used >= 85
   s.kind = top?.kind ?? ''
   const resetAt = top?.resetsAt ? Date.parse(top.resetsAt) : 0
+  if (resetAt) await notePeriod($, now, { resetAt, dead: percent >= 100, health })
   if (resetAt && resetAt !== s.resetAt) {
     s.resetAt = resetAt
     schedule($, now)
@@ -525,7 +548,7 @@ async function applyUsage($: EngineInterface, context: SessionContextUsage, limi
 
   award('3.food')
   if (used >= 50) award('3.home')
-  if (used >= 99) award('3.ice')
+  if (used >= 95) award('3.ice')
   if (used >= 85 && chat) once('starves', chat)
   // Both limits hit inside one weekly period: each death is filed under the week it fell in.
   const week = plan.find(l => l.kind === 'seven_day')?.resetsAt
@@ -1063,7 +1086,7 @@ async function showJukebox($: EngineInterface) {
   if (typeof said?.played === 'number' && said.played > 0) {
     count('discs', said.played)
     if (await parrotOut($)) award('4.parrots')
-    if (Array.isArray(said.discs)) for (const disc of said.discs) if (typeof disc === 'string') once('discsHeard', disc)
+    if (Array.isArray(said.discs)) for (const disc of said.discs) if (typeof disc === 'string' && disc.startsWith('music_disc_')) once('discsHeard', disc)
     await settle($)
   }
 }
@@ -1156,7 +1179,7 @@ export const register: Register = (on, options) => {
       const tokens = usage.input_tokens + usage.output_tokens + usage.cache_creation_input_tokens + (usage.cache_read_input_tokens ?? 0)
       count('tokens', tokens / 1000)
       turn.tokens += tokens
-      if (turn.tokens >= 5_000_000) award('5.mint')
+      if (turn.tokens >= 100_000_000) award('5.mint')
       count(`tokensOn:${day(await $.clock.now())}`, tokens / 1000)
       await gainXP($, tokens)
     }
@@ -1205,7 +1228,7 @@ export const register: Register = (on, options) => {
     const said = typeof e.prompt === 'string' ? e.prompt.trim() : ''
     const now = await $.clock.now()
     const hour = new Date(now).getHours()
-    Object.assign(turn, { edits: 0, passed: false, committed: false, shipped: false, agents: 0, tools: 0, added: 0, removed: 0, inserted: 0, deleted: 0, failing: 0, testFailed: false, failedAny: false, tokens: 0, earned: 0, kinds: new Set<string>() })
+    Object.assign(turn, { edits: 0, passed: false, committed: false, shipped: false, agents: 0, tools: 0, added: 0, removed: 0, inserted: 0, deleted: 0, failing: 0, testFailed: false, failedAny: false, tokens: 0, kinds: new Set<string>() })
     count('prompts')
     if (/\b(please|thanks|thank you)\b/i.test(said)) count('polite')
     // Back after a week or more with no prompt at all.
@@ -1215,6 +1238,7 @@ export const register: Register = (on, options) => {
     once('days', day(now))
     const at = new Date(now)
     if (at.getHours() === 3 && at.getMinutes() === 33) award('5.spooky')
+    await backInTime($, now)
     // The last day of a month, with every day of it worked.
     const length = new Date(at.getFullYear(), at.getMonth() + 1, 0).getDate()
     if (at.getDate() === length) {
