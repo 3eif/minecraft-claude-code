@@ -53,6 +53,8 @@ claude plugin install minecraft-hud@minecraft-hud
 
 Then start a new chat. A short guide opens the first time; type `/minecraft help` to see it again.
 
+Already have it from another marketplace? Installing from this one starts a new store, but your progress comes back from its backup the first time a chat starts.
+
 ## Commands
 
 Everything is under `/minecraft`:
@@ -108,5 +110,7 @@ overlay/build.sh
 ## Disclaimer
 
 NOT AN OFFICIAL MINECRAFT PRODUCT. NOT APPROVED BY OR ASSOCIATED WITH MOJANG OR MICROSOFT. Not affiliated with or endorsed by Anthropic.
+
+Not an official Minecraft product. Not approved by or associated with Mojang or Microsoft. Not an official Anthropic product either.
 
 Minecraft's textures, sounds and music are the property of Mojang. The music is played from your own Minecraft install and is not included here.

@@ -1072,10 +1072,8 @@ let clickOwed = false
 // What the last draws came to, kept in the store so a HUD that fails to appear
 // can be looked into from outside: /minecraft debug shows it too.
 let diag: Record<string, unknown> = {}
-let diagDirty = false
 const record = (key: string, value: unknown) => {
   diag = { ...diag, [key]: value }
-  diagDirty = true
 }
 
 // The helper's screen server keeps one copy of it running with its window
@@ -1280,7 +1278,8 @@ export const register: Register = (on, options) => {
     chat = await $.session.id()
     const restored = await restore($).catch(() => '')
     if (restored) later($, 4000, () => $.ui.toast(restored))
-    chatTurns = Number((await $.store.get(`replies:${chat}`)) ?? 0)
+    const replies = (await $.store.get(`replies:${chat}`)) as { n?: number } | number | undefined
+    chatTurns = typeof replies === 'number' ? replies : (replies?.n ?? 0)
     saved = merge(await storedProgress($), blank())
     const held = (await $.store.get('xp2')) as { units?: number } | undefined
     const old = (await $.store.get('xp')) as { xp?: number } | undefined
@@ -1312,6 +1311,11 @@ export const register: Register = (on, options) => {
     for (const key of await $.store.keys()) {
       const stamp = Number(/(\d{13})/.exec(key)?.[1] ?? 0)
       if (stamp && stamp < (await $.clock.now()) - 2 * 24 * 3600_000) await $.store.delete(key)
+      // A chat's reply count, a month after its last reply; one saved before it carried a time goes too.
+      if (key.startsWith('replies:') && key !== `replies:${chat}`) {
+        const held = (await $.store.get(key)) as { at?: number } | number | undefined
+        if (typeof held !== 'object' || !held.at || held.at < (await $.clock.now()) - 30 * 86_400_000) await $.store.delete(key)
+      }
     }
 
     return next(e)
@@ -1329,7 +1333,7 @@ export const register: Register = (on, options) => {
     if (!e.agentId) {
       count('turns')
       if (++chatTurns >= 200) award('4.serious')
-      if (chat) await $.store.set(`replies:${chat}`, chatTurns)
+      if (chat) await $.store.set(`replies:${chat}`, { n: chatTurns, at: await $.clock.now() })
       // Judged on the whole reply: a failure late in it, or lines added back, count against it.
       if (turn.tools >= 100 && !turn.failedAny) award('5.thanks')
       if (Math.max(turn.removed - turn.added, turn.deleted - turn.inserted) >= 10_000) award('0.exile')
@@ -1422,10 +1426,6 @@ export const register: Register = (on, options) => {
     if (named === 'Agent' || named === 'Task') void later($, 1500, () => void howDid($).then(() => warPigs($)))
     const ran = await next(e)
     const failed = 'isError' in ran && ran.isError === true
-    if (diagDirty) {
-      diagDirty = false
-      await $.store.set('diag', { ...diag, version: 'draw-check', usage: { ready: s.ready, health: s.health, food: s.food } })
-    }
     const input = e as unknown as Record<string, unknown>
     const tool = String(input.tool ?? '')
     const now = await $.clock.now()
