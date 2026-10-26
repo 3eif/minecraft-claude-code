@@ -92,7 +92,7 @@ let chatTurns = 0
 let editsSinceTest = 0
 let failedSinceEdits = false
 const failing = new Set<string>()
-const turn = { edits: 0, passed: false, committed: false, shipped: false, agents: 0, tools: 0, added: 0, removed: 0, inserted: 0, deleted: 0, failing: 0, testFailed: false }
+const turn = { edits: 0, passed: false, committed: false, shipped: false, agents: 0, tools: 0, added: 0, removed: 0, inserted: 0, deleted: 0, failing: 0, testFailed: false, failedAny: false, tokens: 0, earned: 0, kinds: new Set<string>() }
 // What the secret advancements watch across a whole chat.
 const chatRun = { clean: 0, reverted: false, passedSince: false }
 const lineCount = (text: unknown) => (typeof text === 'string' && text ? text.split('\n').length : 0)
@@ -214,7 +214,7 @@ async function tipOnce($: EngineInterface, id: string, title: string, icon: stri
 // A reply's size, by its edits or by what git counted, whichever saw more.
 function bigReply() {
   if (Math.max(turn.added + turn.removed, turn.inserted + turn.deleted) >= 10_000) award('0.debris')
-  if (Math.max(turn.removed - turn.added, turn.deleted - turn.inserted) >= 10_000) award('3.exile')
+  if (Math.max(turn.removed - turn.added, turn.deleted - turn.inserted) >= 10_000) award('0.exile')
 }
 
 function later($: EngineInterface, ms: number, fn: () => void) {
@@ -286,6 +286,14 @@ async function syncShared($: EngineInterface) {
   if (changed) redraw($)
 }
 
+// Progress since the tabs were regrouped is kept under its own key: a chat still
+// running the version before writes the old one, with the old ids, and is left to it.
+// The first read with nothing under the new key takes the old one up once.
+const PROGRESS = 'progress2'
+async function storedProgress($: EngineInterface) {
+  return ((await $.store.get(PROGRESS)) ?? (await $.store.get('progress'))) as Progress | undefined
+}
+
 // Saves what this chat has counted on top of what the store holds, and shows
 // a toast for each advancement that came due.
 // Another chat may have earned it first; the store is read again to see.
@@ -293,7 +301,7 @@ async function settle($: EngineInterface) {
   if (!pending.length && !Object.keys(mine.n).length && !Object.keys(mine.max).length && !Object.keys(mine.sets).length) return
   const now = await $.clock.now()
   const fresh = await withLock($, 'progress', async () => {
-  const next = merge((await $.store.get('progress')) as Progress | undefined, mine)
+  const next = merge(await storedProgress($), mine)
   mine = blank()
   const first = next.sets.first?.[0]
   if (first && now - Date.parse(first) >= 365 * 86_400_000) pending.push('4.birthday')
@@ -306,12 +314,14 @@ async function settle($: EngineInterface) {
   const earned = [...new Set([...named, ...due(next, now)])].filter(a => !next.earned[a.id])
   for (const a of earned) next.earned[a.id] = now
   saved = next
-  await $.store.set('progress', next)
+  await $.store.set(PROGRESS, next)
   return earned
   })
   // A tab's first advancement only opens the tab: it is earned without a toast.
   // The rest show as the game shows them, stacked down the corner, each a beat
   // after the one above so their sounds do not land together.
+  turn.earned += fresh.filter(a => a.parent).length
+  if (turn.earned >= 3) award('5.revaulting')
   fresh
     .filter(a => a.parent)
     .forEach((a, i) => later($, i * 300, () => void overlay($, 1, ['advancement', a.frame, a.name, a.icon, a.desc])))
@@ -433,7 +443,7 @@ async function resetMoment($: EngineInterface, key: string) {
   s.lastReset = key
   if (!key.startsWith('demo:')) {
     if (s.dead) once('respawns', String(s.resetAt))
-    else if (s.health > 0 && s.health <= 2) award('2.bell')
+    else if (s.health > 0 && s.health <= 2) award('3.bell')
     later($, 2600, () => void settle($))
   }
   s.dead = false
@@ -478,10 +488,16 @@ function scheduleTotem($: EngineInterface, now: number) {
 }
 
 // Context and usage both over 90%, bypass on, and three subagents running at once.
+async function warPigs($: EngineInterface) {
+  if (s.demo) return
+  const running = (await $.agent.list().catch(() => [])).filter(a => a.status === 'running').length
+  if (running >= 10) award('5.warpigs')
+}
+
 async function howDid($: EngineInterface) {
   if (s.demo || !s.hardcore || s.contextPct < 90 || s.limitPct < 90) return
   const running = (await $.agent.list().catch(() => [])).filter(a => a.status === 'running').length
-  if (running >= 3) award('1.howdid')
+  if (running >= 3) award('3.howdid')
 }
 
 async function applyUsage($: EngineInterface, context: SessionContextUsage, limits: readonly SessionRateLimit[]) {
@@ -507,28 +523,28 @@ async function applyUsage($: EngineInterface, context: SessionContextUsage, limi
     scheduleTotem($, now)
   }
 
-  award('1.root')
-  if (used >= 50) award('1.home')
-  if (used >= 99) award('1.ice')
+  award('3.food')
+  if (used >= 50) award('3.home')
+  if (used >= 99) award('3.ice')
   if (used >= 85 && chat) once('starves', chat)
   // Both limits hit inside one weekly period: each death is filed under the week it fell in.
   const week = plan.find(l => l.kind === 'seven_day')?.resetsAt
   if (week) {
     for (const l of plan) if (l.percentUsed >= 100) once('limitDeaths', `${week}:${l.kind}`)
     const dead = new Set([...(saved.sets.limitDeaths ?? []), ...(mine.sets.limitDeaths ?? [])])
-    if (dead.has(`${week}:five_hour`) && dead.has(`${week}:seven_day`)) award('2.withering')
+    if (dead.has(`${week}:five_hour`) && dead.has(`${week}:seven_day`)) award('3.withering')
   }
   if (top) {
     const window = `${top.kind}:${resetAt}`
-    award('2.root')
-    if (s.ready && health < s.health) award('2.scratch')
+    award('3.root')
+    if (s.ready && health < s.health) award('3.scratch')
     if (health <= 10) once('halves', window)
     if (health <= 4) once('edges', window)
     if (percent >= 100) {
       once('deaths', window)
       // Out within the first hour of the period: five hours or seven days before the reset.
       const start = resetAt - (top.kind === 'five_hour' ? 5 * 3600_000 : 7 * 86_400_000)
-      if (s.hardcore && resetAt && now - start <= 3600_000) award('2.gameover')
+      if (s.hardcore && resetAt && now - start <= 3600_000) award('3.gameover')
     }
   }
   s.contextPct = used
@@ -1046,7 +1062,7 @@ async function showJukebox($: EngineInterface) {
   const said = await screen($, 'jukebox', { announce: fullscreen && motion('nowplaying') })
   if (typeof said?.played === 'number' && said.played > 0) {
     count('discs', said.played)
-    if (await parrotOut($)) award('3.parrots')
+    if (await parrotOut($)) award('4.parrots')
     if (Array.isArray(said.discs)) for (const disc of said.discs) if (typeof disc === 'string') once('discsHeard', disc)
     await settle($)
   }
@@ -1086,7 +1102,7 @@ export const register: Register = (on, options) => {
     })
     startServer($)
     chat = await $.session.id()
-    saved = merge((await $.store.get('progress')) as Progress | undefined, blank())
+    saved = merge(await storedProgress($), blank())
     const held = (await $.store.get('xp2')) as { units?: number } | undefined
     const old = (await $.store.get('xp')) as { xp?: number } | undefined
     if (typeof held?.units === 'number') xpTotal = held.units
@@ -1139,10 +1155,12 @@ export const register: Register = (on, options) => {
       // Every token consumed, cache reads included, so the count matches what usage tools report.
       const tokens = usage.input_tokens + usage.output_tokens + usage.cache_creation_input_tokens + (usage.cache_read_input_tokens ?? 0)
       count('tokens', tokens / 1000)
+      turn.tokens += tokens
+      if (turn.tokens >= 5_000_000) award('5.mint')
       count(`tokensOn:${day(await $.clock.now())}`, tokens / 1000)
       await gainXP($, tokens)
     }
-    if (/you(?:'|\u2019| a)re absolutely right/i.test(e.answer ?? '')) award('3.bullseye')
+    if (/you(?:'|\u2019| a)re absolutely right/i.test(e.answer ?? '')) award('4.bullseye')
     await settle($)
 
     return next(e)
@@ -1187,10 +1205,23 @@ export const register: Register = (on, options) => {
     const said = typeof e.prompt === 'string' ? e.prompt.trim() : ''
     const now = await $.clock.now()
     const hour = new Date(now).getHours()
-    Object.assign(turn, { edits: 0, passed: false, committed: false, shipped: false, agents: 0, tools: 0, added: 0, removed: 0, inserted: 0, deleted: 0, failing: 0, testFailed: false })
+    Object.assign(turn, { edits: 0, passed: false, committed: false, shipped: false, agents: 0, tools: 0, added: 0, removed: 0, inserted: 0, deleted: 0, failing: 0, testFailed: false, failedAny: false, tokens: 0, earned: 0, kinds: new Set<string>() })
     count('prompts')
     if (/\b(please|thanks|thank you)\b/i.test(said)) count('polite')
+    // Back after a week or more with no prompt at all.
+    const before = [...(saved.sets.days ?? []), ...(mine.sets.days ?? [])].filter(d => d !== day(now)).sort()
+    const last = before[before.length - 1]
+    if (last && now - new Date(`${last}T00:00`).getTime() >= 8 * 86_400_000) award('5.sweet')
     once('days', day(now))
+    const at = new Date(now)
+    if (at.getHours() === 3 && at.getMinutes() === 33) award('5.spooky')
+    // The last day of a month, with every day of it worked.
+    const length = new Date(at.getFullYear(), at.getMonth() + 1, 0).getDate()
+    if (at.getDate() === length) {
+      const worked = new Set([...(saved.sets.days ?? []), ...(mine.sets.days ?? [])])
+      const month = day(now).slice(0, 8)
+      if (Array.from({ length }, (_, i) => `${month}${String(i + 1).padStart(2, '0')}`).every(d => worked.has(d))) award('5.glow')
+    }
     if (!saved.sets.first?.length) once('first', day(now))
     if (hour >= 4 && hour < 7) once('earlies', day(now))
     if (hour < 4) once('lates', day(now))
@@ -1208,7 +1239,7 @@ export const register: Register = (on, options) => {
   // Every tool call is counted.
   on('tool.call', async ($, e, next) => {
     const named = String((e as unknown as Record<string, unknown>).tool ?? '')
-    if (named === 'Agent' || named === 'Task') void later($, 1500, () => void howDid($))
+    if (named === 'Agent' || named === 'Task') void later($, 1500, () => void howDid($).then(() => warPigs($)))
     const ran = await next(e)
     const failed = 'isError' in ran && ran.isError === true
     if (diagDirty) {
@@ -1219,7 +1250,11 @@ export const register: Register = (on, options) => {
     const tool = String(input.tool ?? '')
     const now = await $.clock.now()
     count('tools')
-    if (++turn.tools >= 500) award('3.hero')
+    if (++turn.tools >= 500) award('2.hero')
+    turn.kinds.add(tool)
+    if (turn.kinds.size >= 15) award('5.furious')
+    if (failed) turn.failedAny = true
+    else if (turn.tools >= 100 && !turn.failedAny) award('5.thanks')
     if (EDITS.has(tool) && !failed) {
       count('edits')
       turn.edits++
@@ -1236,24 +1271,24 @@ export const register: Register = (on, options) => {
     const touched = typeof input.file_path === 'string' ? input.file_path : typeof input.notebook_path === 'string' ? input.notebook_path : ''
     if (touched.includes('/') && !failed && (tool === 'Read' || EDITS.has(tool))) {
       folders.add(touched.slice(0, touched.lastIndexOf('/')))
-      if (folders.size >= 25) award('3.tourist')
-      if (folders.size >= 150) award('3.adventuring')
+      if (folders.size >= 25) award('2.tourist')
+      if (folders.size >= 150) award('2.adventuring')
     }
     if (tool === 'Read' && !failed) {
       const path = typeof input.file_path === 'string' ? input.file_path : ''
-      if (/\.(png|jpe?g|gif|webp)$/i.test(path)) award('3.bird')
+      if (/\.(png|jpe?g|gif|webp)$/i.test(path)) award('2.bird')
     }
     if (tool === 'WebFetch') count('fetches')
     if (tool === 'Agent' || tool === 'Task') {
       count('agents')
-      if (++turn.agents >= 5) award('3.help')
+      if (++turn.agents >= 5) award('2.help')
     }
     if (tool === 'Bash') {
       const command = typeof input.command === 'string' ? input.command : ''
       count('commands')
       if (failed) count('failures')
       chatRun.clean = failed ? 0 : chatRun.clean + 1
-      if (chatRun.clean >= 1000) award('3.lock')
+      if (chatRun.clean >= 1000) award('2.lock')
       const said = JSON.stringify(ran)
       if (isTest(command)) {
         const key = testKey(command)
@@ -1267,11 +1302,12 @@ export const register: Register = (on, options) => {
         } else {
           count('passes')
           turn.passed = true
-          if (turn.testFailed) award('0.sniper')
-          if (turn.failing >= 25) award('0.arbalistic')
+          if (turn.testFailed) award('1.sniper')
+          if (turn.failing >= 25) award('1.arbalistic')
+          if (turn.failing >= 100) award('5.tactical')
           if (chatRun.reverted) chatRun.passedSince = true
           if (failing.delete(key)) count('cures')
-          if (editsSinceTest >= 10 && !failedSinceEdits) award('0.diamonds')
+          if (editsSinceTest >= 10 && !failedSinceEdits) award('1.diamonds')
           editsSinceTest = 0
           failedSinceEdits = false
         }
@@ -1290,6 +1326,8 @@ export const register: Register = (on, options) => {
           bigReply()
         }
         if (/\bgit\s+(revert|reset\s+--hard)\b/.test(command)) Object.assign(chatRun, { reverted: true, passedSince: false })
+        // A revert of a revert: git titles it Revert "Revert ...".
+        if (/\bgit\s+revert\b/.test(command) && /Revert \\*"Revert/.test(said)) award('5.blowback')
         if (/\bgit\s+push\b/.test(command) && /\s(--force(-with-lease)?|-f)\b|\s\+\S/.test(command) && /\b(main|master)\b/.test(command)) award('0.frightening')
         if (/\bgh\s+pr\s+create\b/.test(command)) {
           count('prs')
@@ -1297,7 +1335,7 @@ export const register: Register = (on, options) => {
         }
         if (/\bgh\s+pr\s+merge\b/.test(command)) count('merges')
       }
-      if (/\bgit\s+(merge|rebase|pull|cherry-pick|stash\s+pop)\b/.test(command) && JSON.stringify(ran).includes('CONFLICT')) award('3.sticky')
+      if (/\bgit\s+(merge|rebase|pull|cherry-pick|stash\s+pop)\b/.test(command) && JSON.stringify(ran).includes('CONFLICT')) award('0.sticky')
       if (turn.edits > 0 && turn.passed && turn.committed && turn.shipped) award('0.twobirds')
     }
 

@@ -97,6 +97,8 @@ for name in sorted(wanted): save(icon(name), f'item/{name}.png')
 for p in ['gui/advancements/window', 'gui/container/crafting_table']:
     copy(p, p + '.png')
 for bg in ['stone', 'nether', 'end', 'adventure', 'husbandry']: copy(f'gui/advancements/backgrounds/{bg}', f'gui/advancements/backgrounds/{bg}.png')
+# The Deep Dark has no background of the game's own: its deepslate.
+copy('block/deepslate', 'gui/advancements/backgrounds/deepslate.png')
 for p in sorted(names):
     # The advancement frames and boxes, the tabs along the top (the only side used), the slider.
     if p.endswith('.png') and ((p.startswith(T + 'gui/sprites/advancements/') and '/tab_' not in p) or p.startswith(T + 'gui/sprites/advancements/tab_above_left')

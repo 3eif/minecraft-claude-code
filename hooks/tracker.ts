@@ -1,4 +1,4 @@
-import { ADVANCEMENTS, TABS } from './advancements'
+import { ADVANCEMENTS, RENAMED, TABS } from './advancements'
 
 // What has been counted and earned, for all time and across every chat. Three
 // kinds of figure, because several chats write to it at once:
@@ -7,13 +7,15 @@ import { ADVANCEMENTS, TABS } from './advancements'
 //   sets  things counted once each however many chats see them (a day, a
 //         limit window, a chat), so a set's size is the count
 export type Progress = {
+  // 2 since the tabs were regrouped: advancements saved before it carry their old ids.
+  v?: number
   earned: Record<string, number>
   n: Record<string, number>
   max: Record<string, number>
   sets: Record<string, string[]>
 }
 
-export const blank = (): Progress => ({ earned: {}, n: {}, max: {}, sets: {} })
+export const blank = (): Progress => ({ v: 2, earned: {}, n: {}, max: {}, sets: {} })
 
 const SET_LIMIT = 400
 
@@ -26,7 +28,10 @@ export function merge(stored: Progress | undefined, mine: Progress): Progress {
   for (const key of new Set([...Object.keys(base.sets ?? {}), ...Object.keys(mine.sets)])) {
     out.sets[key] = [...new Set([...(base.sets?.[key] ?? []), ...(mine.sets[key] ?? [])])].sort().slice(-SET_LIMIT)
   }
-  for (const [id, at] of [...Object.entries(mine.earned), ...Object.entries(base.earned ?? {})]) out.earned[id] = Math.min(out.earned[id] ?? at, at)
+  // Saved before the regrouping: each id read as what it is now, and one removed since dropped.
+  const was = Object.entries(base.earned ?? {})
+  const held = base.v === 2 ? was : was.flatMap(([id, at]) => (RENAMED[id] ? [[RENAMED[id], at] as [string, number]] : []))
+  for (const [id, at] of [...Object.entries(mine.earned), ...held]) out.earned[id] = Math.min(out.earned[id] ?? at, at)
   return out
 }
 
@@ -46,6 +51,7 @@ export function streak(days: readonly string[], today: number) {
 /** The figure an advancement's counter stands at. */
 export function figure(p: Progress, counter: string, now: number) {
   if (counter === 'dayStreak') return streak(p.sets.days ?? [], now)
+  if (counter === 'earned') return ADVANCEMENTS.filter(a => p.earned[a.id]).length
   if (counter === 'commitStreak') return streak(p.sets.commitDays ?? [], now)
   if (counter in p.max) return p.max[counter] ?? 0
   if (counter in p.sets) return p.sets[counter]?.length ?? 0

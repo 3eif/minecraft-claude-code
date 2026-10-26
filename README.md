@@ -23,14 +23,14 @@ It's a silly concept. It's also a real plugin.
 - **Level up:** XP orbs and the level-up chime.
 - **A villager's "hmm":** when Claude stops to ask you a question.
 
-**Advancements:** 101 of them, with toasts that stack in the corner like the game's and a full advancement tree you can drag or scroll. Each chain starts easy and runs deep: its last tiers take a heavy user months. Some are secret.
+**Advancements:** 113 of them in six tabs: Building (edits, commits, pull requests), Combat (tests), Exploration (tools, the terminal, subagents, the web), Survival (your limit and your context), Habits (prompts, tokens, levels, streaks) and The Deep Dark, the rare ones, which opens at 50 earned. Toasts stack in the corner like the game's, and the tree drags or scrolls. Each chain starts easy and runs deep: its last tiers take a heavy user months. Some are secret.
 
 **The hotbar:** click a slot to open its screen.
 
 | Slot | What it does |
 |---|---|
 | Advancements | The advancement tree. |
-| Jukebox | Play the game's music discs and soundtrack, from your own Minecraft install. |
+| Jukebox | Play the game's music discs and soundtrack, from your own Minecraft install. Click or drag along the track to seek. |
 | Parrot | A 3D parrot on your desktop. It watches your pointer and dances when the Jukebox plays. Right-click it for a new coat. |
 | Settings | Volume, sound types, and which animations play. |
 

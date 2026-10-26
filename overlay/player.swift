@@ -184,6 +184,7 @@ final class Player: NSObject, AVAudioPlayerDelegate {
         case "toggle": toggle()
         case "next": step(1)
         case "prev": if (audio?.currentTime ?? 0) > 3 { audio?.currentTime = 0 } else { step(-1) }
+        case "seek": if let audio, let to = command["to"] as? Double { audio.currentTime = max(0, min(audio.duration - 0.5, to)) }
         case "volume":
             if let v = command["volume"] as? Double { jukeboxVolume = v; audio?.volume = Float(v) }
         case "stop": quit()
@@ -348,6 +349,7 @@ final class JukeboxScene: Scene {
     var readAt = -1.0
     var volume = jukeboxVolume
     var sliding = false
+    var seeking: Double? = nil      // where along the track the pointer holds it, 0 to 1, while dragging
     var notes: [Note] = []
     var noteAt = 0.0
     var played = 0
@@ -417,9 +419,22 @@ final class JukeboxScene: Scene {
             for (i, line) in wrap(problem, 92).prefix(3).enumerated() { text(ctx, line, tx, T + 20 + CGFloat(i * 9), 0xAA0000) }
         } else if playing {
             for (i, line) in wrap(title, 92).prefix(2).enumerated() { text(ctx, line, tx, T + 20 + CGFloat(i * 9), 0x404040) }
-            let position = state["position"] as? Double ?? 0, duration = state["duration"] as? Double ?? 0
+            let duration = state["duration"] as? Double ?? 0
+            // The bar seeks: press anywhere along it, drag, and the track jumps there on release.
+            let track = CGRect(x: tx, y: T + 38, width: 92, height: 10)
+            let along = { (p: CGPoint) in Double(min(1, max(0, (p.x - tx) / 92))) }
+            if duration > 0, let p = pressed, track.contains(p) { seeking = along(p) }
+            if seeking != nil, let p = pointer { seeking = along(p) }
+            if let to = seeking, !held {
+                send(["cmd": "seek", "to": to * duration], t)
+                state["position"] = to * duration
+                seeking = nil
+                playSound("click", volume: 0.25)
+            }
+            let position = seeking.map { $0 * duration } ?? state["position"] as? Double ?? 0
             fill(ctx, CGRect(x: tx, y: T + 42, width: 92, height: 3), 0xFF373737)
             if duration > 0 { fill(ctx, CGRect(x: tx, y: T + 42, width: (92 * CGFloat(min(1, position / duration))).rounded(), height: 3), 0xFF80FF20) }
+            if duration > 0, seeking == nil, let p = pointer, track.contains(p) { tip = [("Jump to \(clock(along(p) * duration))", 0xFFFFFF)] }
             let end = duration > 0 ? clock(duration) : "..."
             text(ctx, clock(position), tx, T + 48, 0x404040)
             text(ctx, end, tx + 92 - CGFloat(uiFont.width(end)), T + 48, 0x404040)
