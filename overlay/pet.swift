@@ -120,6 +120,7 @@ final class ParrotPet {
             x = screen.visibleFrame.maxX - size.width - 40; y = screen.visibleFrame.minY + 30
         }
         window = NSWindow(contentRect: NSRect(origin: NSPoint(x: x, y: y), size: size), styleMask: .borderless, backing: .buffered, defer: false)
+        window.animationBehavior = .none
         window.isOpaque = false
         window.backgroundColor = .clear
         window.hasShadow = false

@@ -361,7 +361,7 @@ final class ToastScene: NSObject, Scene, NSSharingServicePickerDelegate {
     /// A click on the toast: Share opens the system's share menu with a picture of it, and nothing else.
     func click(_ p: CGPoint, in view: NSView, gui: CGFloat) {
         guard !tutorial, shareRect.contains(p), !sharing else { return }
-        playSound("click", volume: 0.25)
+        playSound("click", volume: 0.12)
         let s = size, k: CGFloat = 4
         let ctx = bitmap(Int(s.width * k), Int(s.height * k))
         ctx.interpolationQuality = .none
@@ -436,7 +436,7 @@ final class DeathScene: Scene {
             if let img = !active ? off : over ? hot : idle { blit(ctx, img, box) }
             centered(text, y: y + 6, w: w, rgb: active ? 0xFFFFFF : 0xA0A0A0, in: ctx)
             if active, closingAt == nil, let p = pressed, box.contains(p) {
-                playSound("click", volume: 0.25)
+                playSound("click", volume: 0.12)
                 closingAt = t
                 emit(["death": text == label ? "respawn" : "title"])
             }

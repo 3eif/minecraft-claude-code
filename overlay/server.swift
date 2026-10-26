@@ -33,6 +33,8 @@ func binaryStamp() -> String {
 func overlayWindow() -> OverlayWindow {
     let window = OverlayWindow(contentRect: frame, styleMask: .borderless, backing: .buffered, defer: false)
     window.isOpaque = false
+    // Shown at once, as the game's screens are: no zoom from macOS as the window appears.
+    window.animationBehavior = .none
     window.backgroundColor = .clear
     window.hasShadow = false
     window.level = .screenSaver

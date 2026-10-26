@@ -260,6 +260,7 @@ final class Player: NSObject, AVAudioPlayerDelegate {
         guard let screen = NSScreen.main else { return }
         if banner == nil {
             let made = NSWindow(contentRect: screen.frame, styleMask: .borderless, backing: .buffered, defer: false)
+            made.animationBehavior = .none
             made.isOpaque = false
             made.backgroundColor = .clear
             made.hasShadow = false
@@ -391,7 +392,7 @@ final class JukeboxScene: Scene {
         state = ["title": tracks[index].title, "icon": tracks[index].icon, "album": album, "paused": false, "loading": true, "position": 0.0, "duration": 0.0]
         played += 1
         discs.insert(tracks[index].icon)
-        playSound("click", volume: 0.25)
+        playSound("click", volume: 0.12)
     }
 
     func draw(_ ctx: CGContext, t: Double, w: CGFloat, h: CGFloat) {
@@ -430,7 +431,7 @@ final class JukeboxScene: Scene {
             if over(slot, L, T) {
                 fill(ctx, CGRect(x: L + slot.x, y: T + slot.y, width: 16, height: 16), 0x80FFFFFF)
                 tip = [("Take it out", 0xFFFFFF), ("Stops the music", 0xAAAAAA)]
-                if pressed != nil { send(["cmd": "stop"], t); state = [:]; playSound("click", volume: 0.25) }
+                if pressed != nil { send(["cmd": "stop"], t); state = [:]; playSound("click", volume: 0.12) }
             }
         }
 
@@ -450,7 +451,7 @@ final class JukeboxScene: Scene {
                 send(["cmd": "seek", "to": to * duration], t)
                 state["position"] = to * duration
                 seeking = nil
-                playSound("click", volume: 0.25)
+                playSound("click", volume: 0.12)
             }
             let position = seeking.map { $0 * duration } ?? state["position"] as? Double ?? 0
             fill(ctx, CGRect(x: tx, y: T + 42, width: 92, height: 3), 0xFF373737)
@@ -544,7 +545,7 @@ final class JukeboxScene: Scene {
             if over(s, L, T) {
                 fill(ctx, CGRect(x: L + s.x, y: T + s.y, width: 16, height: 16), 0x80FFFFFF)
                 tip = [(album.name, 0xFFFFFF), ("\(album.tracks.count) tracks", 0xAAAAAA), ("Click to choose one", 0x55FF55)]
-                if pressed != nil { openAlbum = i; scroll = 0; playSound("click", volume: 0.25) }
+                if pressed != nil { openAlbum = i; scroll = 0; playSound("click", volume: 0.12) }
             }
         }
         if library.discs.isEmpty, library.albums.isEmpty {

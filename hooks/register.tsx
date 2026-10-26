@@ -626,6 +626,8 @@ function countdown($: EngineInterface, to: number) {
 // The Totem of Undying, when the weekly limit resets: once, in whichever chat
 // gets there first, quietly, and never over your typing.
 const TOTEM_LOUDNESS = 0.15
+// A hotbar slot's click; the screens' own buttons click at about the same.
+const CLICK = 0.3
 async function totemMoment($: EngineInterface, key: string) {
   const now = await $.clock.now()
   if (now - s.lastEdit < 3000) {
@@ -1144,7 +1146,7 @@ async function screen($: EngineInterface, mode: string, spec: unknown) {
   screenOpen = true
   try {
     await $.store.set('timing', { mode, pressed: pressedAt, launching: Date.now() })
-    const click = clickOwed ? 0.6 : 0
+    const click = clickOwed ? CLICK : 0
     clickOwed = false
     const env = { volume: sounds ? volume : 0, muted, click }
     const served = await askServer($, mode, spec, env).catch(() => undefined)
@@ -1222,7 +1224,7 @@ async function toggleParrot($: EngineInterface) {
   const on = state.on !== true
   if (clickOwed) {
     clickOwed = false
-    play($, 'click', 0.6)
+    play($, 'click', CLICK)
   }
   await $.fs.write(path, JSON.stringify({ ...state, on }))
   if (on && !(await serverInbox($))) startServer($)
@@ -1727,7 +1729,7 @@ export const register: Register = (on, options) => {
                         const said = open($, slot.id)
                         if (!said.startsWith('Opening')) {
                           clickOwed = false
-                          play($, 'click', 0.6)
+                          play($, 'click', CLICK)
                           $.ui.toast(said)
                         }
                       },

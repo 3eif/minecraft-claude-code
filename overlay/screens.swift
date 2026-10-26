@@ -135,7 +135,7 @@ func button(_ ctx: CGContext, _ r: CGRect, _ label: String, enabled: Bool = true
         }
     }
     centered(ctx, label, r.midX, r.minY + 6, enabled ? 0xFFFFFF : 0xA0A0A0)
-    if over, let p = pressed, r.contains(p) { playSound("click", volume: 0.25); return true }
+    if over, let p = pressed, r.contains(p) { playSound("click", volume: 0.12); return true }
     return false
 }
 
@@ -249,7 +249,7 @@ final class AdvancementsScene: Scene {
         // Tabs first, so a press on one changes what is drawn this frame.
         for i in tabs.indices {
             let r = CGRect(x: L + CGFloat(32 * i), y: T - 28, width: 28, height: 32)
-            if let p = pressed, r.contains(p), i != selected { selected = i; playSound("click", volume: 0.25) }
+            if let p = pressed, r.contains(p), i != selected { selected = i; playSound("click", volume: 0.12) }
         }
         if let p = pressed, inner.contains(p) { dragging = true; last = p }
         if !held { dragging = false }
