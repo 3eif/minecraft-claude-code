@@ -2,7 +2,7 @@
 
 **Claude Code, played as Minecraft survival.** Your usage limit is your hearts. The context window is your hunger. Every token is XP. Hit your limit and you die; compact a chat and you eat a golden apple; ship a pull request and an advancement slides into the corner.
 
-![The HUD: hearts for your usage limit, hunger for your context, XP for your tokens](docs/bars.png)
+![Hearts, hunger, XP and the hotbar above the prompt in Claude Code](docs/hud.png)
 
 It's a silly idea, built properly: the game's own sprites, sounds, fonts and timings, 113 advancements, a jukebox, and a 3D parrot that dances on your desktop.
 

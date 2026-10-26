@@ -531,7 +531,7 @@ case "music":
     // Posting is asynchronous: give the notification a moment to leave.
     RunLoop.current.run(until: Date().addingTimeInterval(0.2))
     exit(0)
-case "advancements", "options", "jukebox", "guide", "death":
+case "advancements", "options", "jukebox", "guide", "death", "band":
     window.ignoresMouseEvents = false
     window.acceptsMouseMovedEvents = true
     interactive = true
@@ -563,7 +563,14 @@ default:
 // MC_CLICKS="x,y;x,y" clicks those points first, one frame each (GUI pixels),
 // and MC_SCROLL scrolls on the last frame.
 if let out = ProcessInfo.processInfo.environment["MC_SNAPSHOT"] {
-    let W = 1512, H = 982
+    // MC_SIZE="w,h" sets the picture's size in pixels; MC_BACKGROUND=<png> draws an image under the
+    // screen, stretched to it (a screenshot of the desktop, for pictures of the mod in place).
+    let size = (ProcessInfo.processInfo.environment["MC_SIZE"] ?? "").split(separator: ",").compactMap { Int($0) }
+    let W = size.count == 2 ? size[0] : 1512, H = size.count == 2 ? size[1] : 982
+    let backdrop = ProcessInfo.processInfo.environment["MC_BACKGROUND"].flatMap { path -> CGImage? in
+        guard let source = CGImageSourceCreateWithURL(URL(fileURLWithPath: path) as CFURL, nil) else { return nil }
+        return CGImageSourceCreateImageAtIndex(source, 0, nil)
+    }
     let point = { (s: String) -> CGPoint? in
         let n = s.split(separator: ",").compactMap { Double($0) }
         return n.count == 2 ? CGPoint(x: n[0], y: n[1]) : nil
@@ -577,6 +584,11 @@ if let out = ProcessInfo.processInfo.environment["MC_SNAPSHOT"] {
         ctx.setShouldAntialias(false)
         ctx.setFillColor(red: 0.35, green: 0.45, blue: 0.4, alpha: 1)
         ctx.fill(CGRect(x: 0, y: 0, width: W, height: H))
+        if let backdrop {
+            ctx.interpolationQuality = .high
+            ctx.draw(backdrop, in: CGRect(x: 0, y: 0, width: W, height: H))
+            ctx.interpolationQuality = .none
+        }
         ctx.translateBy(x: 0, y: CGFloat(H)); ctx.scaleBy(x: 1, y: -1)
         ctx.scaleBy(x: view.gui, y: view.gui)
         pointer = at ?? pointer
