@@ -1,4 +1,5 @@
-.DS_Store
-*.js
 !hooks/*.js
+*.js
+.DS_Store
+__pycache__/
 node_modules/

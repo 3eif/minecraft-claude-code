@@ -1,6 +1,6 @@
 # Minecraft HUD for Claude Code
 
-Claude Code, drawn as Minecraft survival mode. Your usage limit is your hearts, the context window is your hunger bar, and every token you spend is XP.
+The Minecraft Claude Code Mod: Claude Code as Minecraft survival mode. Your usage limit is your hearts, the context window is your hunger bar, and every token you spend is XP.
 
 It's a silly concept. It's also a real plugin.
 
@@ -19,20 +19,16 @@ It's a silly concept. It's also a real plugin.
 - **Damage:** the hearts flash and shake as you use your limit.
 - **Golden apple:** eaten when a chat compacts, refilling hunger.
 - **The death screen:** when you hit your limit. "Claude was slain by the 5-hour limit." In bypass-permissions mode it's hardcore: "Game Over!"
-- **Totem of Undying:** when your limit resets.
+- **Totem of Undying:** when your weekly limit resets. It plays once, in one chat, however many you have open.
 - **Level up:** XP orbs and the level-up chime.
 - **A villager's "hmm":** when Claude stops to ask you a question.
 
-**Advancements:** 73 of them, with toasts that stack in the corner like the game's and a full advancement tree. Some are secret.
+**Advancements:** 101 of them, with toasts that stack in the corner like the game's and a full advancement tree you can drag or scroll. Each chain starts easy and runs deep: its last tiers take a heavy user months. Some are secret.
 
 **The hotbar:** click a slot to open its screen.
 
 | Slot | What it does |
 |---|---|
-| Skill Book | Browse your skills in a lectern book and use one. |
-| Enchanting Table | Rewrite your prompt. Higher XP levels unlock stronger enchantments. |
-| Brewing Stand | Pick the model (potions), effort (glowstone) and fast mode (blaze powder). |
-| Map | Your project as islands; the ones Claude has explored this chat are charted. |
 | Advancements | The advancement tree. |
 | Jukebox | Play the game's music discs and soundtrack, from your own Minecraft install. |
 | Parrot | A 3D parrot on your desktop. It watches your pointer and dances when the Jukebox plays. Right-click it for a new coat. |
@@ -63,19 +59,19 @@ Everything is under `/minecraft`:
 
 | Command | What it does |
 |---|---|
-| `/minecraft skills`, `enchant`, `brew`, `map`, `advancements`, `music`, `parrot`, `settings` | Open a hotbar screen |
+| `/minecraft advancements`, `music`, `parrot`, `settings` | Open a hotbar screen |
 | `/minecraft music pause`, `next`, `prev`, `stop` | Control the Jukebox |
 | `/minecraft death`, `totem`, `damage`, `apple`, `advancement`, `xp` | Preview a moment |
 | `/minecraft live` | Return to your real figures after a preview |
 | `/minecraft volume 50`, `mute`, `unmute` | Sound |
-| `/minecraft fullscreen on\|off`, `hotbar on\|off` | Turn the full-screen moments or the hotbar off |
+| `/minecraft fullscreen on\|off`, `hotbar on\|off` | Turn the full-screen moments or the hotbar off. `/minecraft hotbar on` brings a hidden hotbar back. |
 | `/minecraft clear` | Reset your XP. Advancements are kept. |
 
 ## Privacy
 
-Everything stays on your Mac, with one exception: the Enchanting Table sends the prompt you're enchanting to Claude to rewrite it, as any message would. Otherwise the mod reads your usage figures and the current chat from Claude Code, lists your project's files with `git ls-files` for the Map, and sends nothing anywhere.
+Everything stays on your Mac. The mod reads your usage figures and the current chat from Claude Code, and sends nothing anywhere.
 
-What it keeps (XP, advancements, the parrot's spot) lives in Claude Code's plugin storage and `~/Library/Caches/minecraft-hud`.
+What it keeps (XP, advancements, settings, the parrot's spot) lives in Claude Code's plugin storage and `~/Library/Caches/minecraft-hud`, shared by every open chat: a setting changed in one shows in the others within a few seconds.
 
 ## Uninstall
 

@@ -4,7 +4,7 @@ import { ADVANCEMENTS } from './advancements'
 import { HOTBAR, ICONS } from './hotbar'
 import { DIGITS, PIX } from './pixels'
 import { GLYPH, GLYPH_W, SPR, XP_BG, XP_FILL } from './sprites'
-import { blank, day, due, ENCHANTMENTS, enchantSystem, isTest, merge, testKey, tree, type Progress } from './tracker'
+import { blank, day, due, isTest, merge, testKey, tree, type Progress } from './tracker'
 
 // Minecraft's survival HUD above the prompt.
 //   hearts  = the usage limit that will stop you first (5-hour or weekly)
@@ -17,6 +17,8 @@ import { blank, day, due, ENCHANTMENTS, enchantSystem, isTest, merge, testKey, t
 // across every chat, counted in units of 100,000 tokens. The store holds it;
 // this is the figure as this chat last read it.
 let xpTotal = 0
+// Until when this chat's orbs are flying into the bar.
+let orbsUntil = 0
 const TICK = 50
 
 type Timer = ReturnType<EngineInterface['clock']['after']>
@@ -33,6 +35,8 @@ const s = {
   starving: false,
   kind: '',
   resetAt: 0,
+  // When the weekly limit resets: the Totem of Undying's moment.
+  weekAt: 0,
   hardcore: false,
   hungerFx: false,
   light: false,
@@ -59,8 +63,19 @@ const motion = (moment: string) => !still.includes(moment)
 const soundKind = (name: string) =>
   /^hit/.test(name) ? 'damage' : /^eat|^burp/.test(name) ? 'eating' : name === 'orb' ? 'orbs' : name === 'levelup' ? 'xp'
     : /^toast|^challenge/.test(name) ? 'advancements' : name === 'use_totem' ? 'totem' : /^villager/.test(name) ? 'villager'
-      : /^enchant/.test(name) ? 'enchant' : /^brew|^bottle/.test(name) ? 'brewing' : name === 'click' ? 'clicks' : name
+      : name === 'click' ? 'clicks' : name
 const prefs = () => ({ sounds, volume, fullscreen, hotbar, muted, still, orbsChosen: true })
+type Prefs = Partial<ReturnType<typeof prefs>>
+function usePrefs(kept: Prefs | undefined) {
+  if (Array.isArray(kept?.muted)) muted = kept.muted
+  // Saved before the orbs had their own switch: they start off like everyone else's.
+  if (!kept?.orbsChosen && !muted.includes('orbs')) muted = [...muted, 'orbs']
+  if (Array.isArray(kept?.still)) still = kept.still
+  if (typeof kept?.sounds === 'boolean') sounds = kept.sounds
+  if (typeof kept?.volume === 'number') volume = kept.volume
+  if (typeof kept?.fullscreen === 'boolean') fullscreen = kept.fullscreen
+  if (typeof kept?.hotbar === 'boolean') hotbar = kept.hotbar
+}
 let timers: Timer[] = []
 let seen: unknown = null
 
@@ -71,13 +86,13 @@ let saved = blank()
 let mine = blank()
 let pending: string[] = []
 let chat = ''
-// What the map shows of this chat: files Claude opened, changed, the last one, and tests failing now.
-const trail = { visited: new Set<string>(), changed: new Set<string>(), failing: new Set<string>(), last: '' }
+// The folders Claude has read or edited a file in, this chat.
+const folders = new Set<string>()
 let chatTurns = 0
 let editsSinceTest = 0
 let failedSinceEdits = false
 const failing = new Set<string>()
-const turn = { edits: 0, passed: false, committed: false, shipped: false, agents: 0, tools: 0, added: 0, removed: 0, inserted: 0, deleted: 0, failing: 0 }
+const turn = { edits: 0, passed: false, committed: false, shipped: false, agents: 0, tools: 0, added: 0, removed: 0, inserted: 0, deleted: 0, failing: 0, testFailed: false }
 // What the secret advancements watch across a whole chat.
 const chatRun = { clean: 0, reverted: false, passedSince: false }
 const lineCount = (text: unknown) => (typeof text === 'string' && text ? text.split('\n').length : 0)
@@ -191,7 +206,7 @@ const redraw = ($: EngineInterface) => $.ui.invalidate('ui.render')
 // The game's tutorial toasts: one for each thing worth explaining, the first
 // time it happens, and never again in any chat.
 async function tipOnce($: EngineInterface, id: string, title: string, icon: string, desc: string) {
-  if (s.demo || (await $.store.get(`tip:${id}`))) return
+  if (s.demo || (await $.store.get(`tip:${id}`)) || !(await claim($, `tip:${id}`))) return
   await $.store.set(`tip:${id}`, true)
   await overlay($, 1, ['tip', 'tip', title, icon, desc])
 }
@@ -206,12 +221,78 @@ function later($: EngineInterface, ms: number, fn: () => void) {
   timers.push($.clock.after(ms, fn))
 }
 
+// ---------- one record for every chat ----------
+// Every open chat runs its own copy of this module. What they share is the
+// store, and a folder in the cache: mkdir is atomic across processes, so the
+// first chat to make a folder there owns that moment (a totem, a death, a
+// toast), and a folder held while the store is read and written keeps two
+// chats from writing over each other's counts.
+let sharedAt = ''
+async function sharedDir($: EngineInterface) {
+  if (!sharedAt) {
+    const home = (await $.env.get('HOME')) ?? ''
+    sharedAt = home ? `${home}/Library/Caches/minecraft-hud/shared` : ''
+  }
+  return sharedAt
+}
+const folderName = (key: string) => key.replace(/[^A-Za-z0-9._-]/g, '_')
+const MAKE = 'mkdir -p "$(dirname "$0")" && mkdir "$0" 2>/dev/null'
+
+/** True in exactly one chat for each key: the first to ask. Kept two days. */
+async function claim($: EngineInterface, key: string) {
+  const dir = await sharedDir($)
+  if (!dir) return true
+  const made = await $.process.run(['/bin/sh', '-c', MAKE, `${dir}/claims/${folderName(key)}`], { timeoutMs: 5000 }).catch(() => undefined)
+  // With no way to ask, every chat plays it, as before there was a record.
+  return made ? made.exitCode === 0 : true
+}
+
+/** Runs `fn` while no other chat runs one under the same name. */
+async function withLock<T>($: EngineInterface, name: string, fn: () => Promise<T>): Promise<T> {
+  const dir = await sharedDir($)
+  const lock = `${dir}/locks/${folderName(name)}`
+  let held = false
+  for (let tries = 0; dir && !held && tries < 60; tries++) {
+    const made = await $.process.run(['/bin/sh', '-c', MAKE, lock], { timeoutMs: 5000 }).catch(() => undefined)
+    if (!made) break
+    held = made.exitCode === 0
+    if (held) break
+    // A chat that quit while holding it leaves it behind: after ten seconds it is taken anyway.
+    const since = await $.fs.stat(lock).then(st => Date.now() - st.mtimeMs, () => 0)
+    if (since > 10_000) await $.process.run(['/bin/rmdir', lock], { timeoutMs: 5000 }).catch(() => undefined)
+    else await $.clock.sleep(50)
+  }
+  try {
+    return await fn()
+  } finally {
+    if (held) await $.process.run(['/bin/rmdir', lock], { timeoutMs: 5000 }).catch(() => undefined)
+  }
+}
+
+/** Takes up what other chats changed: the settings, and XP they earned. */
+async function syncShared($: EngineInterface) {
+  const before = JSON.stringify(prefs())
+  usePrefs((await $.store.get('prefs')) as Prefs | undefined)
+  let changed = JSON.stringify(prefs()) !== before
+  const held = ((await $.store.get('xp2')) as { units?: number } | undefined)?.units
+  // Never while this chat's own orbs are still flying: the bar would overshoot.
+  if (typeof held === 'number' && held > xpTotal && (await $.clock.now()) > orbsUntil) {
+    xpTotal = held
+    if (Math.floor(held) > s.xpShown) {
+      s.xpShown = Math.floor(held)
+      changed = true
+    }
+  }
+  if (changed) redraw($)
+}
+
 // Saves what this chat has counted on top of what the store holds, and shows
 // a toast for each advancement that came due.
 // Another chat may have earned it first; the store is read again to see.
 async function settle($: EngineInterface) {
   if (!pending.length && !Object.keys(mine.n).length && !Object.keys(mine.max).length && !Object.keys(mine.sets).length) return
   const now = await $.clock.now()
+  const fresh = await withLock($, 'progress', async () => {
   const next = merge((await $.store.get('progress')) as Progress | undefined, mine)
   mine = blank()
   const first = next.sets.first?.[0]
@@ -222,10 +303,12 @@ async function settle($: EngineInterface) {
   if ((next.n[today] ?? 0) >= 1_000_000) pending.push('4.overpowered')
   const named = pending.map(id => ADVANCEMENTS.find(a => a.id === id)).filter(a => a !== undefined)
   pending = []
-  const fresh = [...new Set([...named, ...due(next, now)])].filter(a => !next.earned[a.id])
-  for (const a of fresh) next.earned[a.id] = now
+  const earned = [...new Set([...named, ...due(next, now)])].filter(a => !next.earned[a.id])
+  for (const a of earned) next.earned[a.id] = now
   saved = next
   await $.store.set('progress', next)
+  return earned
+  })
   // A tab's first advancement only opens the tab: it is earned without a toast.
   // The rest show as the game shows them, stacked down the corner, each a beat
   // after the one above so their sounds do not land together.
@@ -252,23 +335,19 @@ function hurt($: EngineInterface, to: number, now: number) {
 
 // Every open session takes the same hit; only the first one sounds it.
 async function hurtSound($: EngineInterface) {
-  const mark = `hurt:${s.demo ? s.damageAt : `${s.resetAt}:${s.health}`}`
-  if (await $.store.get(mark)) return
-  await $.store.set(mark, true)
+  if (!(await claim($, `hurt:${s.demo ? s.damageAt : `${s.resetAt}:${s.health}`}`))) return
   play($, pick(['hit1', 'hit2', 'hit3']))
 }
 
 // The death screen over the whole display, as in the game, until a button is
 // pressed. Every open session hits the limit together; only the first plays it.
 async function deathMoment($: EngineInterface, now: number) {
-  const mark = `death:${s.demo ? now : s.resetAt}`
-  if (await $.store.get(mark)) return
-  // Another screen is up: try again shortly, without marking this death as shown.
+  // Another screen is up: try again shortly, before any chat claims this death.
   if (fullscreen && screenOpen) {
     later($, 3000, () => void deathMoment($, now))
     return
   }
-  await $.store.set(mark, true)
+  if (!(await claim($, `death:${s.demo ? now : s.resetAt}`))) return
   if (!fullscreen) return
   const said = await screen($, 'death', {
     title: s.hardcore ? 'Game Over!' : 'You Died!',
@@ -306,12 +385,14 @@ function eat($: EngineInterface, now: number) {
 // `real` is false for a preview, which moves the bar and leaves the level alone.
 async function gainXP($: EngineInterface, tokens: number, real = true) {
   if (real) {
-    // Other chats earn too, so the store is read before it is added to.
-    const stored = ((await $.store.get('xp2')) as { units?: number } | undefined)?.units ?? 0
-    // What other chats earned since: the bar jumps to it quietly. Only this chat's own gain gets orbs and the chime.
-    if (Math.floor(stored) > s.xpShown) s.xpShown = Math.floor(stored)
-    xpTotal = Math.max(0, stored) + tokens / XP_UNIT
-    await $.store.set('xp2', { units: xpTotal })
+    await withLock($, 'xp', async () => {
+      // Other chats earn too, so the store is read before it is added to.
+      const stored = ((await $.store.get('xp2')) as { units?: number } | undefined)?.units ?? 0
+      // What other chats earned since: the bar jumps to it quietly. Only this chat's own gain gets orbs and the chime.
+      if (Math.floor(stored) > s.xpShown) s.xpShown = Math.floor(stored)
+      xpTotal = Math.max(0, stored) + tokens / XP_UNIT
+      await $.store.set('xp2', { units: xpTotal })
+    })
     if (s.xpShown > xpTotal) s.xpShown = Math.floor(xpTotal)
   }
   const total = real ? xpTotal : s.xpShown + tokens / XP_UNIT
@@ -324,6 +405,7 @@ async function gainXP($: EngineInterface, tokens: number, real = true) {
   }
   // One orb every 2 ticks, each with its ding; the bar jumps, it never slides.
   const now = await $.clock.now()
+  orbsUntil = now + orbs.length * 2 * TICK + 100
   later($, orbs.length * 2 * TICK + 4100, () => redraw($))
   orbs.forEach((orb, i) =>
     later($, i * 2 * TICK, () => {
@@ -335,31 +417,24 @@ async function gainXP($: EngineInterface, tokens: number, real = true) {
       // Levels are rare enough now that every one gets the chime.
       if (level > before) play($, 'levelup', 0.75)
       if (real) raise('level', level)
-      if (real && level > before) void tipOnce($, 'level', 'Level up!', 'experience_bottle', 'XP is based on the tokens you consume. Higher levels unlock stronger enchantments.')
+      if (real && level > before) void tipOnce($, 'level', 'Level up!', 'experience_bottle', 'XP is based on the tokens you consume.')
       redraw($)
     }),
   )
 }
 
+// The hearts refill when the limit they show resets. The totem is not played
+// here: it is the weekly limit's moment alone (totemMoment).
 async function resetMoment($: EngineInterface, key: string) {
   if (s.lastReset === key) return
+  // A reset scheduled for a limit the hearts no longer show.
+  if (/^\d+$/.test(key) && key !== String(s.resetAt)) return
   const now = await $.clock.now()
-  // Never over your typing: wait until the prompt has been quiet for 3 seconds.
-  if (now - s.lastEdit < 3000) {
-    later($, 1000, () => void resetMoment($, key))
-    return
-  }
   s.lastReset = key
   if (!key.startsWith('demo:')) {
     if (s.dead) once('respawns', String(s.resetAt))
     else if (s.health > 0 && s.health <= 2) award('2.bell')
     later($, 2600, () => void settle($))
-  }
-  // Every open session reaches this moment; only the first plays the overlay.
-  const mark = `reset:${key}`
-  if (!(await $.store.get(mark))) {
-    await $.store.set(mark, true)
-    await overlay($, 0.6, ['totem'])
   }
   s.dead = false
   s.health = 20
@@ -376,12 +451,30 @@ function countdown($: EngineInterface, to: number) {
   for (let i = 0; i <= 10; i++) later($, i * 1000, () => redraw($))
 }
 
+// The Totem of Undying, when the weekly limit resets: once, in whichever chat
+// gets there first, quietly, and never over your typing.
+const TOTEM_LOUDNESS = 0.25
+async function totemMoment($: EngineInterface, key: string) {
+  const now = await $.clock.now()
+  if (now - s.lastEdit < 3000) {
+    later($, 1000, () => void totemMoment($, key))
+    return
+  }
+  if (key.startsWith('demo:') || (key === String(s.weekAt) && (await claim($, `totem:${key}`)))) await overlay($, TOTEM_LOUDNESS, ['totem'])
+}
+
 function schedule($: EngineInterface, now: number) {
   if (s.resetAt <= now) return
   const key = String(s.resetAt)
-  const wait = s.resetAt - now
-  if (wait > 10_000) later($, wait - 10_000, () => countdown($, s.resetAt))
-  later($, wait + 1500, () => void resetMoment($, key))
+  later($, s.resetAt - now + 1500, () => void resetMoment($, key))
+}
+
+function scheduleTotem($: EngineInterface, now: number) {
+  if (s.weekAt <= now) return
+  const key = String(s.weekAt)
+  const wait = s.weekAt - now
+  if (wait > 10_000) later($, wait - 10_000, () => countdown($, s.weekAt))
+  later($, wait + 1500, () => void totemMoment($, key))
 }
 
 // Context and usage both over 90%, bypass on, and three subagents running at once.
@@ -408,10 +501,23 @@ async function applyUsage($: EngineInterface, context: SessionContextUsage, limi
     s.resetAt = resetAt
     schedule($, now)
   }
+  const weekAt = Date.parse(plan.find(l => l.kind === 'seven_day')?.resetsAt ?? '') || 0
+  if (weekAt && weekAt !== s.weekAt) {
+    s.weekAt = weekAt
+    scheduleTotem($, now)
+  }
 
   award('1.root')
   if (used >= 50) award('1.home')
+  if (used >= 99) award('1.ice')
   if (used >= 85 && chat) once('starves', chat)
+  // Both limits hit inside one weekly period: each death is filed under the week it fell in.
+  const week = plan.find(l => l.kind === 'seven_day')?.resetsAt
+  if (week) {
+    for (const l of plan) if (l.percentUsed >= 100) once('limitDeaths', `${week}:${l.kind}`)
+    const dead = new Set([...(saved.sets.limitDeaths ?? []), ...(mine.sets.limitDeaths ?? [])])
+    if (dead.has(`${week}:five_hour`) && dead.has(`${week}:seven_day`)) award('2.withering')
+  }
   if (top) {
     const window = `${top.kind}:${resetAt}`
     award('2.root')
@@ -454,6 +560,8 @@ async function refresh($: EngineInterface) {
 
 // ---------- drawing ----------
 const SCALE = 1.75
+// More than a column of the desktop's code font is wide, so the HUD is drawn too wide and shrunk to fit, never short.
+const PX_PER_COLUMN = 9
 const H = 18
 const TOP = 2
 const BAR = TOP + 10
@@ -540,12 +648,12 @@ function hudSvg(now: number, g: number) {
 
   const xp = levelOf(s.xpShown)
   // The XP bar spans the full width, under the hearts and the hunger.
-  const n = (g - 2) / 10
+  const n = Math.ceil((g - 2) / 10)
   const bw = g
   const bx = 0
   out += `</g><g>${tip(`Level ${xp.level} · ${short(xp.toNext)} tokens to level ${xp.level + 1} · ${short(xp.tokens)} consumed`, bx, BAR - 1, bw, 7)}`
   // The bar is the game's own: its left cap, ten-pixel segments repeated to
-  // the width, its last segment and right cap. Nothing is stretched.
+  // the width (the last one cut where the width ends) and its right cap. Nothing is stretched.
   const { level, progress } = levelOf(s.xpShown)
   const piece = (i: number) => (i === n - 1 ? 18 : 1 + (i % 17))
   const pw = Math.min(bw, Math.floor(progress * (bw + 1)))
@@ -752,16 +860,12 @@ function labelSvg(now: number, g: number) {
 // for the selection frame, which is wider and taller than a slot. It is cut
 // into one tile a slot so each can tell the pointer is over it.
 const SLOTS = [
-  { id: 'skills', name: 'Skill Book', short: 'Skills' },
-  { id: 'enchant', name: 'Enchanting Table', short: 'Enchant' },
-  { id: 'brew', name: 'Brewing Stand', short: 'Brew' },
-  { id: 'map', name: 'Map', short: 'Map' },
   { id: 'advancements', name: 'Advancements', short: 'Tree' },
   { id: 'music', name: 'Jukebox', short: 'Music' },
   { id: 'parrot', name: 'Parrot', short: 'Parrot' },
   { id: 'settings', name: 'Settings', short: 'Settings' },
 ] as const
-const BAR_W = 170
+const BAR_W = 10 + 20 * SLOTS.length
 const BAR_H = 23
 const tileX = (i: number) => (i === 0 ? 0 : 5 + 20 * i)
 const tileW = (i: number) => (i === SLOTS.length - 1 ? BAR_W : 25 + 20 * i) - tileX(i)
@@ -895,7 +999,12 @@ async function clearXP($: EngineInterface) {
   redraw($)
 }
 
+const HOTBAR_BACK = 'Type /minecraft hotbar on to bring it back.'
+
 async function showOptions($: EngineInterface) {
+  // What another chat set last, so this one does not write over it.
+  await syncShared($)
+  const had = hotbar
   const chose = await screen($, 'options', { ...prefs(), level: levelOf(xpTotal).level })
   if (!chose) return
   sounds = chose.sounds !== false
@@ -907,120 +1016,20 @@ async function showOptions($: EngineInterface) {
   still = names(chose.still)
   await $.store.set('prefs', prefs())
   if (chose.resetXp === true) await clearXP($)
+  if (had && !hotbar) $.ui.toast(`Hotbar hidden. ${HOTBAR_BACK}`)
   redraw($)
 }
 
-// The lectern: every skill you can run, as a book. The first pages list them by
-// name; each skill then has a page of its own, and "Use Skill" puts it in the
-// prompt box, in front of whatever is typed there.
-function frontmatter(text: string) {
-  const out: Record<string, string> = {}
-  const block = /^---\r?\n([\s\S]*?)\r?\n---/.exec(text)?.[1]
-  if (!block) return out
-  const lines = block.split(/\r?\n/)
-  for (let i = 0; i < lines.length; i++) {
-    const kv = /^([A-Za-z_-]+):\s*(.*)$/.exec(lines[i] ?? '')
-    if (!kv) continue
-    let value = (kv[2] ?? '').trim()
-    // A folded or literal block: the indented lines under the key.
-    if (['', '|', '>', '|-', '>-'].includes(value)) {
-      const more: string[] = []
-      while (i + 1 < lines.length && /^\s+\S/.test(lines[i + 1] ?? '')) more.push((lines[++i] ?? '').trim())
-      value = more.join(' ')
-    }
-    out[kv[1]!] = value.replace(/^["']|["']$/g, '')
-  }
-  return out
-}
-
-async function listSkills($: EngineInterface) {
-  const home = (await $.env.get('HOME')) ?? ''
-  const roots: [string, string, string][] = [[`${home}/.claude/skills`, 'Your skills', ''], [`${await $.session.cwd()}/.claude/skills`, 'This project', '']]
-  try {
-    const settings = JSON.parse(await $.fs.read(`${home}/.claude/settings.json`)) as { enabledPlugins?: Record<string, boolean> }
-    const installed = JSON.parse(await $.fs.read(`${home}/.claude/plugins/installed_plugins.json`)) as { plugins?: Record<string, { installPath?: string }[]> }
-    for (const [key, entries] of Object.entries(installed.plugins ?? {})) {
-      const path = entries[0]?.installPath
-      if (!path || settings.enabledPlugins?.[key] === false) continue
-      const plugin = key.split('@')[0]!
-      roots.push([`${path}/skills`, `Plugin: ${plugin}`, `${plugin}:`])
-    }
-  } catch {
-    // No plugins to read, or settings that do not parse: personal and project skills still list.
-  }
-  const found: { name: string; desc: string; source: string; use: string }[] = []
-  for (const [dir, source, prefix] of roots) {
-    const entries = await $.fs.list(dir).catch(() => [])
-    for (const entry of [...entries].sort((a, b) => a.name.localeCompare(b.name))) {
-      if (entry.kind === 'file' || found.length >= 200) continue
-      const text = await $.fs.read(`${dir}/${entry.name}/SKILL.md`).catch(() => '')
-      if (!text) continue
-      const meta = frontmatter(text)
-      const name = meta.name || entry.name
-      found.push({ name, desc: (meta.description ?? '').slice(0, 600), source, use: `${prefix}${name}` })
-    }
-  }
-  return found
-}
-
-async function showLectern($: EngineInterface) {
-  const skills = await listSkills($)
-  const chose = await screen($, 'lectern', { skills })
-  if (typeof chose?.use !== 'string') return
-  const draft = (await $.prompt.read()).text.trim()
-  const filled = await $.prompt.fill({ text: `/${chose.use} ${draft}`.trimEnd() + ' ', mode: 'replace' }).catch(() => ({ isFilled: false }))
-  if (!filled.isFilled) $.ui.toast(`Type /${chose.use} to use it.`)
-  count('skillsUsed')
-  await settle($)
-}
-
-// The enchanting table: the draft in the prompt box is the item, and the three
-// offers are three depths of rewrite. Each needs a level; none spends any.
-// The brewing stand sets the chat's model, effort and fast mode by running the
-// app's own /model, /effort and /fast, so the app shows the change as if typed.
-// A command the app lacks falls back to rewriting this chat's requests.
-// Potions are the models; a 1M-context model is the splash potion of its family.
-const POTIONS = [
-  { family: 'haiku', name: 'Potion of Swiftness', color: 0x33ebff, label: 'Haiku 4.5', model: 'claude-haiku-4-5-20251001', note: 'The fastest replies.' },
-  { family: 'sonnet', name: 'Potion of Leaping', color: 0xfdff84, label: 'Sonnet 5.5', model: 'claude-sonnet-5-5', note: 'Quick and capable.' },
-  { family: 'opus', name: 'Potion of Strength', color: 0xffc700, label: 'Opus 5.5', model: 'claude-opus-5-5', note: 'The strongest reasoning.' },
-  { family: 'fable', name: 'Potion of Night Vision', color: 0xc2ff66, label: 'Fable 5.1', model: 'claude-fable-5-1', note: '' },
-]
-const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max']
-const effortName = (v: string) => ({ low: 'Low', medium: 'Medium', high: 'High', xhigh: 'Extra High', max: 'Max' })[v] ?? v.charAt(0).toUpperCase() + v.slice(1)
-// What this chat's requests are rewritten with, for a setting the app has no command for.
-let brew: { model?: string; effort?: string } = {}
-// What the chat last used, read off its requests, and fast mode as last brewed.
-let seenModel = ''
-let seenEffort = ''
-
-/** A model option as a potion. */
-function potionFor(id: string) {
-  const known = POTIONS.find(p => id.toLowerCase().includes(p.family))
-  const long = /\[1m\]/i.test(id)
-  if (/plan/i.test(id)) return { id, name: 'Potion of the Turtle Master', color: 0x8a6fb1, bottle: 'potion', lines: ['Model: Opus Plan Mode', 'Opus plans, Sonnet builds.'] }
-  if (known) {
-    return { id, name: `${long ? 'Splash ' : ''}${known.name}`, color: known.color, bottle: long ? 'splash_potion' : 'potion',
-             lines: [`Model: ${known.label}${long ? ' (1M)' : ''}`, long ? 'A million-token context.' : known.note].filter(Boolean) }
-  }
-  return { id, name: 'Water Bottle', color: 0x385dc6, bottle: 'potion', lines: [`Model: ${/^default$/i.test(id) ? 'Default' : id}`, ...(/^default$/i.test(id) ? ["The app's recommended model."] : [])] }
-}
-
-/** Which option a model id stands for: claude-opus-5-5 is "opus", with [1m] the 1M one. */
-function optionFor(model: string, options: readonly string[]) {
-  if (options.includes(model)) return model
-  const family = POTIONS.find(p => model.toLowerCase().includes(p.family))?.family
-  const long = family ? `${family}[1m]` : ''
-  if (family && /\[1m\]/i.test(model) && options.includes(long)) return long
-  return family && options.includes(family) ? family : 'default'
-}
-
 // The parrot lives on the desktop, drawn by the screen server; its state is a file every server watches.
+const parrotFile = async ($: EngineInterface) => `${(await $.env.get('HOME')) ?? ''}/Library/Caches/minecraft-hud/parrot.json`
+const parrotState = async ($: EngineInterface) =>
+  JSON.parse((await $.fs.read(await parrotFile($)).catch(() => '{}')) || '{}') as Record<string, unknown>
+const parrotOut = async ($: EngineInterface) => (await parrotState($)).on === true
+
 async function toggleParrot($: EngineInterface) {
-  const home = (await $.env.get('HOME')) ?? ''
-  if (!home) return
-  const path = `${home}/Library/Caches/minecraft-hud/parrot.json`
-  const state = JSON.parse((await $.fs.read(path).catch(() => '{}')) || '{}') as Record<string, unknown>
+  if (!(await $.env.get('HOME'))) return
+  const path = await parrotFile($)
+  const state = await parrotState($)
   const on = state.on !== true
   if (clickOwed) {
     clickOwed = false
@@ -1031,198 +1040,22 @@ async function toggleParrot($: EngineInterface) {
   $.ui.toast(on ? 'Your parrot is out. Drag it anywhere; right-click for a new coat.' : 'Your parrot has gone to roost.')
 }
 
-// The test files a runner names as failing: jest and vitest "FAIL path", pytest "FAILED path::".
-const FAILING = /(?:FAIL|FAILED)\s+([\w./@-]+\.(?:test|spec)\.[cm]?[jt]sx?|[\w./-]*test[\w./-]*\.py)/g
-
-// The map: the project's folders as islands, charted where Claude has been this chat.
-// A folder under src/ (or app/, lib/, packages/) is an island of its own.
-const islandOf = (path: string) => {
-  const parts = path.split('/')
-  if (parts.length === 1) return '(root)'
-  return ['src', 'app', 'lib', 'packages', 'apps', 'crates'].includes(parts[0]!) && parts.length > 2 ? `${parts[0]}/${parts[1]}` : parts[0]!
-}
-
-/** The project's files in islands: a folder over 200 files splits into its subfolders, a lone subfolder deepens the name. */
-function groupFiles(files: string[]) {
-  const groups = new Map<string, string[]>()
-  const add = (k: string, f: string) => (groups.get(k) ?? groups.set(k, []).get(k)!).push(f)
-  for (const f of files) add(islandOf(f), f)
-  const whole = new Set<string>()
-  for (let guard = 0; guard < 80 && groups.size < 40; guard++) {
-    const big = [...groups].filter(([k, l]) => k !== '(root)' && !whole.has(k) && l.length > 200).sort((a, b) => b[1].length - a[1].length)[0]
-    if (!big) break
-    const [key, list] = big
-    const stay: string[] = [], kids = new Map<string, string[]>()
-    for (const f of list) {
-      const rest = f.slice(key.length + 1).split('/')
-      if (rest.length < 2) stay.push(f)
-      else (kids.get(`${key}/${rest[0]}`) ?? kids.set(`${key}/${rest[0]}`, []).get(`${key}/${rest[0]}`)!).push(f)
-    }
-    if (!kids.size) { whole.add(key); continue }
-    groups.delete(key)
-    if (stay.length) { groups.set(key, stay); whole.add(key) }
-    for (const [k, l] of kids) groups.set(k, l)
-  }
-  return groups
-}
-
-async function showMap($: EngineInterface) {
-  const cwd = await $.session.cwd()
-  // Paths from the repository's top, so a chat started in a subfolder still sees the whole project.
-  const top = await $.process.run(['git', 'rev-parse', '--show-toplevel'], { cwd, timeoutMs: 5000 }).catch(() => undefined)
-  const root = top?.exitCode === 0 && top.stdout.trim() ? top.stdout.trim() : cwd
-  // Every worktree of the repository is the same project: a path in any of them maps to the same file.
-  const trees = await $.process.run(['git', 'worktree', 'list', '--porcelain'], { cwd: root, timeoutMs: 5000 }).catch(() => undefined)
-  const roots = [root, ...(trees?.exitCode === 0 ? trees.stdout.split('\n').filter(l => l.startsWith('worktree ')).map(l => l.slice(9)) : [])]
-    .sort((a, b) => b.length - a.length)
-  const rel = (path: string) => {
-    const base = roots.find(r => path.startsWith(r + '/'))
-    return base ? path.slice(base.length + 1) : ''
-  }
-  const listed = await $.process.run(['git', 'ls-files'], { cwd: root, timeoutMs: 5000 }).catch(() => undefined)
-  let files = (listed?.exitCode === 0 ? listed.stdout.split('\n') : []).filter(Boolean)
-  if (!files.length) files = (await $.fs.list(root).catch(() => [])).filter(e => !e.name.startsWith('.')).map(e => (e.kind === 'dir' ? `${e.name}/x` : e.name))
-  // What this chat did, read back from its transcript, so the whole chat counts however long ago
-  // and across reloads of this mod; joined with what the hooks saw (subagents' reads among them).
-  const visited = new Set(trail.visited), changed = new Set(trail.changed)
-  let failing = new Set(trail.failing), last = ''
-  const history = ((await $.session.messages().catch(() => [])) ?? []) as { toolUses?: { tool: string; input: Record<string, unknown>; text?: string; isError?: true }[] }[]
-  for (const message of Array.isArray(history) ? history : []) {
-    for (const use of message.toolUses ?? []) {
-      const path = typeof use.input.file_path === 'string' ? use.input.file_path : typeof use.input.notebook_path === 'string' ? use.input.notebook_path : ''
-      if (path && !use.isError && (use.tool === 'Read' || EDITS.has(use.tool))) {
-        visited.add(path)
-        last = path
-        if (EDITS.has(use.tool)) changed.add(path)
-      }
-      const command = typeof use.input.command === 'string' ? use.input.command : ''
-      if (use.tool === 'Bash' && isTest(command)) {
-        failing = use.isError ? new Set([...(use.text ?? '').matchAll(FAILING)].map(m => m[1]!)) : new Set()
-      }
-    }
-  }
-  if (trail.last) last = trail.last
-  const islands = new Map<string, { files: number; seen: boolean; markers: { file: string; kind: string }[] }>()
-  const island = (name: string) => islands.get(name) ?? islands.set(name, { files: 0, seen: false, markers: [] }).get(name)!
-  const groups = groupFiles(files)
-  for (const [key, list] of groups) island(key).files = list.length
-  // A file's island: the deepest group holding it; a file git does not track yet, its folder's.
-  const keys = [...groups.keys()].filter(k => k !== '(root)').sort((a, b) => b.length - a.length)
-  const islandOf = (f: string) => keys.find(k => f.startsWith(k + '/')) ?? (f.includes('/') ? f.split('/')[0]! : '(root)')
-  for (const f of [...visited].map(rel).filter(Boolean)) island(islandOf(f)).seen = true
-  for (const f of [...changed].map(rel).filter(Boolean)) island(islandOf(f)).markers.push({ file: f, kind: 'changed' })
-  // A runner names failing tests from the chat's folder; the map's paths are from the repository's top.
-  for (const raw of failing) {
-    const f = rel(raw.startsWith('/') ? raw : `${cwd}/${raw.replace(/^\.\//, '')}`) || raw.replace(/^\.\//, '')
-    island(islandOf(f)).markers.push({ file: f, kind: 'fail' })
-  }
-  const here = rel(last)
-  if (here) island(islandOf(here)).markers.push({ file: here, kind: 'here' })
-  // Every island Claude reached, then the biggest of the rest, thirty in all.
-  const all = [...islands].map(([name, i]) => ({ name, ...i, seen: i.seen || i.markers.length > 0 }))
-  const shown = [...all.filter(i => i.seen), ...all.filter(i => !i.seen).sort((a, b) => b.files - a.files)].slice(0, 30)
-  // Explorers: ten folders in one chat, or every island of a map of five or more.
-  const explored = all.filter(i => i.seen).length
-  if (explored >= 10) award('3.tourist')
-  if (all.length >= 5 && explored === all.length) award('3.adventuring')
-  if (explored >= 10 || (all.length >= 5 && explored === all.length)) void settle($)
-  // An island is named by its last two folders; the full path is the group's.
-  // ...unless two would share a name, which keep their whole path.
-  const short = (name: string) => name.split('/').slice(-2).join('/')
-  const taken = new Map<string, number>()
-  for (const i of shown) taken.set(short(i.name), (taken.get(short(i.name)) ?? 0) + 1)
-  const named = shown.map(i => ({ ...i, name: (taken.get(short(i.name)) ?? 0) > 1 ? i.name : short(i.name) }))
-  const said = await screen($, 'map', { title: `Map of ${root.split('/').pop() || root}`, islands: named })
-  if (typeof said?.file === 'string') await $.prompt.fill({ text: `@${said.file} `, mode: 'insert' }).catch(() => undefined)
-}
-
-async function showBrewing($: EngineInterface) {
-  const commands = new Set((await $.command.list().catch(() => [])).map(c => c.name))
-  const row = (await $.config.list().catch(() => [])).find(r => r.key === 'model')
-  // Nine slots: the row's options, less the ones that only name another.
-  const options = (row?.options?.length ? row.options.filter(o => o !== 'best') : ['default', ...POTIONS.map(p => p.family)]).slice(0, 9)
-  const potion = optionFor(brew.model ?? (seenModel || String(row?.value ?? '')), options)
-  const effort = EFFORTS.indexOf(brew.effort ?? seenEffort)
-  const said = await screen($, 'brew', {
-    potions: options.map(potionFor),
-    efforts: EFFORTS.map(effortName),
-    potion,
-    effort,
-    // The app's fast-mode state cannot be read: the stand offers a toggle, not a state.
-    ...(commands.has('fast') ? { fast: false } : {}),
-  })
-  if (typeof said?.potion !== 'string') return
-  const run = async (command: string, args: string) => {
-    if (!commands.has(command)) return false
-    return $.command.run({ command, args }).then(() => true, () => false)
-  }
-  const notes: string[] = []
-  if (said.potion !== potion) {
-    const chosen = said.potion
-    if (await run('model', chosen)) delete brew.model
-    else brew.model = POTIONS.find(p => chosen.toLowerCase().includes(p.family))?.model ?? chosen
-    notes.push(potionFor(chosen).lines[0]!.replace('Model: ', ''))
-  }
-  const level = typeof said.effort === 'number' ? EFFORTS[said.effort] : undefined
-  if (level && said.effort !== effort) {
-    if (await run('effort', level)) delete brew.effort
-    else brew.effort = level
-    notes.push(`${effortName(level).toLowerCase()} effort`)
-  }
-  if (said.fast === true && (await run('fast', ''))) {
-    notes.push('fast mode switched')
-  }
-  if (notes.length) {
-    $.ui.toast(`Brewed: ${notes.join(', ')}.`)
-    count('brews')
-    // The five kinds: the app's default and the four model families.
-    const brewed = String(said.potion)
-    const kind = POTIONS.find(p => brewed.toLowerCase().includes(p.family))?.family ?? (/^default$/i.test(brewed) ? 'default' : '')
-    if (kind) once('potionKinds', kind)
-    void settle($)
-  }
-}
-
-async function showEnchanting($: EngineInterface, given: string) {
-  const draft = (given || (await $.prompt.read()).text).trim()
-  const chose = await screen($, 'enchant', {
-    draft: draft.slice(0, 2000),
-    level: levelOf(xpTotal).level,
-    options: ENCHANTMENTS.map(({ name, need, desc }) => ({ name, need, desc })),
-  })
-  const spell = typeof chose?.choice === 'number' ? ENCHANTMENTS[chose.choice] : undefined
-  if (!spell) return
-  $.ui.toast(`Enchanting with ${spell.name}...`)
-  const reply = await $.model.complete({ model: 'sonnet', system: enchantSystem(spell.how), prompt: draft, maxTokens: 2000, timeoutMs: 120_000 })
-  if (!reply.isAnswered || !reply.text.trim()) {
-    $.ui.toast('The enchantment fizzled. Try the table again.')
-    return
-  }
-  const filled = await $.prompt.fill({ text: reply.text.trim(), mode: 'replace' }).catch(() => ({ isFilled: false }))
-  $.ui.toast(filled.isFilled ? `Prompt enchanted with ${spell.name}.` : 'The prompt box could not be changed just now.')
-  count('enchants')
-  await settle($)
-}
-
 // The jukebox: the screen chooses, and a player of the helper's own keeps
 // playing after it closes. The music is read from the person's Minecraft install.
 async function showJukebox($: EngineInterface) {
   const said = await screen($, 'jukebox', { announce: fullscreen && motion('nowplaying') })
   if (typeof said?.played === 'number' && said.played > 0) {
     count('discs', said.played)
+    if (await parrotOut($)) award('3.parrots')
     if (Array.isArray(said.discs)) for (const disc of said.discs) if (typeof disc === 'string') once('discsHeard', disc)
     await settle($)
   }
 }
 
 // What a slot opens, by its button or by /minecraft <slot>.
-function open($: EngineInterface, id: string, given = '') {
+function open($: EngineInterface, id: string) {
   if (screenOpen) return 'A screen is already open.'
-  if (id === 'skills') void showLectern($)
-  else if (id === 'enchant') void showEnchanting($, given)
-  else if (id === 'brew') void showBrewing($)
-  else if (id === 'map') void showMap($)
-  else if (id === 'parrot') void toggleParrot($)
+  if (id === 'parrot') void toggleParrot($)
   else if (id === 'advancements') void showAdvancements($)
   else if (id === 'music') void showJukebox($)
   else if (id === 'help') void showGuide($)
@@ -1232,7 +1065,7 @@ function open($: EngineInterface, id: string, given = '') {
 }
 
 const DEMOS = ['damage', 'low', 'apple', 'starve', 'death', 'reset', 'totem', 'advancement', 'xp', 'villager', 'hardcore', 'hunger', 'live', 'debug']
-const SCREENS = ['help', 'skills', 'enchant', 'brew', 'map', 'parrot', 'advancements', 'music', 'settings', 'clear']
+const SCREENS = ['help', 'parrot', 'advancements', 'music', 'settings', 'clear']
 
 export const register: Register = (on, options) => {
   const chosen = options as { sounds?: boolean; volume?: string; fullscreen?: boolean }
@@ -1252,7 +1085,6 @@ export const register: Register = (on, options) => {
       immediate: true,
     })
     startServer($)
-    // The app's settings rows, kept for /minecraft debug: what the brewing stand can set.
     chat = await $.session.id()
     saved = merge((await $.store.get('progress')) as Progress | undefined, blank())
     const held = (await $.store.get('xp2')) as { units?: number } | undefined
@@ -1273,16 +1105,13 @@ export const register: Register = (on, options) => {
       await $.store.set('xp2', { units: xpTotal })
     }
     s.xpShown = Math.floor(xpTotal)
-    const kept = (await $.store.get('prefs')) as { sounds?: boolean; volume?: number; fullscreen?: boolean; hotbar?: boolean; muted?: string[]; still?: string[]; orbsChosen?: boolean } | undefined
-    if (Array.isArray(kept?.muted)) muted = kept.muted
-    // Saved before the orbs had their own switch: they start off like everyone else's.
-    if (!kept?.orbsChosen && !muted.includes('orbs')) muted = [...muted, 'orbs']
-    if (Array.isArray(kept?.still)) still = kept.still
-    if (typeof kept?.sounds === 'boolean') sounds = kept.sounds
-    if (typeof kept?.volume === 'number') volume = kept.volume
-    if (typeof kept?.fullscreen === 'boolean') fullscreen = kept.fullscreen
-    if (typeof kept?.hotbar === 'boolean') hotbar = kept.hotbar
+    usePrefs((await $.store.get('prefs')) as Prefs | undefined)
     await refresh($)
+    // Every chat looks at what the others changed every few seconds, and at the usage less often.
+    let beat = 0
+    timers.push($.clock.every(3000, () => void syncShared($).then(() => (++beat % 5 === 0 ? refresh($) : undefined)).catch(() => undefined)))
+    const dir = await sharedDir($)
+    if (dir) await $.process.run(['/usr/bin/find', `${dir}/claims`, '-mindepth', '1', '-maxdepth', '1', '-mtime', '+2', '-exec', 'rmdir', '{}', '+'], { timeoutMs: 5000 }).catch(() => undefined)
     // The guide opens by itself once, on the first run anywhere, a moment after the chat appears.
     if (e.isInteractive && e.surface && !(await $.store.get('guided'))) later($, 3000, () => void showGuide($))
     for (const key of await $.store.keys()) {
@@ -1335,6 +1164,7 @@ export const register: Register = (on, options) => {
   on('session.end', async ($, e, next) => {
     if (e.reason === 'clear') {
       chatTurns = 0
+      folders.clear()
       Object.assign(chatRun, { clean: 0, reverted: false, passedSince: false })
     }
 
@@ -1357,7 +1187,7 @@ export const register: Register = (on, options) => {
     const said = typeof e.prompt === 'string' ? e.prompt.trim() : ''
     const now = await $.clock.now()
     const hour = new Date(now).getHours()
-    Object.assign(turn, { edits: 0, passed: false, committed: false, shipped: false, agents: 0, tools: 0, added: 0, removed: 0, inserted: 0, deleted: 0, failing: 0 })
+    Object.assign(turn, { edits: 0, passed: false, committed: false, shipped: false, agents: 0, tools: 0, added: 0, removed: 0, inserted: 0, deleted: 0, failing: 0, testFailed: false })
     count('prompts')
     if (/\b(please|thanks|thank you)\b/i.test(said)) count('polite')
     once('days', day(now))
@@ -1404,10 +1234,10 @@ export const register: Register = (on, options) => {
       bigReply()
     }
     const touched = typeof input.file_path === 'string' ? input.file_path : typeof input.notebook_path === 'string' ? input.notebook_path : ''
-    if (touched && !failed && (tool === 'Read' || EDITS.has(tool))) {
-      trail.visited.add(touched)
-      trail.last = touched
-      if (EDITS.has(tool)) trail.changed.add(touched)
+    if (touched.includes('/') && !failed && (tool === 'Read' || EDITS.has(tool))) {
+      folders.add(touched.slice(0, touched.lastIndexOf('/')))
+      if (folders.size >= 25) award('3.tourist')
+      if (folders.size >= 150) award('3.adventuring')
     }
     if (tool === 'Read' && !failed) {
       const path = typeof input.file_path === 'string' ? input.file_path : ''
@@ -1429,17 +1259,16 @@ export const register: Register = (on, options) => {
         const key = testKey(command)
         if (failed) {
           count('testFails')
+          turn.testFailed = true
           failing.add(key)
           failedSinceEdits = true
-          // The test files a runner names as failing: jest and vitest "FAIL path", pytest "FAILED path::".
-          for (const m of said.matchAll(FAILING)) trail.failing.add(m[1]!)
           const counts = [...said.matchAll(/(\d+)\s+(?:failed|failing|failures?)\b/gi)].map(m => Number(m[1]))
           turn.failing = Math.max(turn.failing, ...counts)
         } else {
           count('passes')
           turn.passed = true
+          if (turn.testFailed) award('0.sniper')
           if (turn.failing >= 25) award('0.arbalistic')
-          trail.failing.clear()
           if (chatRun.reverted) chatRun.passedSince = true
           if (failing.delete(key)) count('cures')
           if (editsSinceTest >= 10 && !failedSinceEdits) award('0.diamonds')
@@ -1475,18 +1304,6 @@ export const register: Register = (on, options) => {
     return ran
   })
 
-  // The brewed potion: this chat's requests go to its model, at its effort.
-  // Subagents keep their own.
-  on('turn.step', async function* ($, e, next) {
-    if (!e.agentId) {
-      seenModel = e.model
-      seenEffort = typeof e.effort === 'string' ? e.effort : seenEffort
-    }
-    const { model, effort } = brew
-    if (e.agentId || (!model && !effort)) return yield* next(e)
-    return yield* next({ ...e, ...(model ? { model } : {}), ...(effort ? { effort: effort as typeof e.effort } : {}) })
-  })
-
   // A villager's "hmm" whenever Claude stops to ask you something.
   on('tool.call', { tool: 'AskUserQuestion' }, ($, e, next) => {
     play($, pick(['villager1', 'villager2', 'villager3']))
@@ -1500,8 +1317,8 @@ export const register: Register = (on, options) => {
     const typed = e.args.trim()
     // /minecraft mute, /minecraft unmute, /minecraft volume 50, /minecraft fullscreen on|off, /minecraft hotbar on|off
     const [word, value] = typed.split(/\s+/)
-    if (word === 'skills' || word === 'enchant' || word === 'brew' || word === 'map' || word === 'parrot' || word === 'advancements' || word === 'settings' || word === 'help') {
-      return { text: open($, word, typed.slice(word.length).trim()) }
+    if (word === 'parrot' || word === 'advancements' || word === 'settings' || word === 'help') {
+      return { text: open($, word) }
     }
     // /minecraft music opens the jukebox; with pause, next, prev or stop it tells the player.
     if (word === 'music') {
@@ -1532,7 +1349,7 @@ export const register: Register = (on, options) => {
         hotbar = value === 'on'
         redraw($)
       }
-      const status = `Sounds ${sounds ? `on at ${Math.round(volume * 100)}%` : 'off'}. Full-screen moments ${fullscreen ? 'on' : 'off'}. Hotbar ${hotbar ? 'on' : 'off'}.`
+      const status = `Sounds ${sounds ? `on at ${Math.round(volume * 100)}%` : 'off'}. Full-screen moments ${fullscreen ? 'on' : 'off'}. Hotbar ${hotbar ? 'on.' : `off. ${HOTBAR_BACK}`}`
       await $.store.set('prefs', prefs())
       if (sounds) play($, 'orb', 0.6)
       return { text: status }
@@ -1547,14 +1364,14 @@ export const register: Register = (on, options) => {
     }
     const scene = typed === 'achievement' ? 'advancement' : typed
     const now = await $.clock.now()
-    if (!DEMOS.includes(scene)) return { text: `Moments: ${DEMOS.join(', ')}. Screens: help, skills, enchant <prompt>, brew, map, advancements, music, parrot, settings. Music: music pause|next|prev|stop. Also: clear, mute, unmute, volume 0-100, fullscreen on|off, hotbar on|off.` }
+    if (!DEMOS.includes(scene)) return { text: `Moments: ${DEMOS.join(', ')}. Screens: help, advancements, music, parrot, settings. Music: music pause|next|prev|stop. Also: clear, mute, unmute, volume 0-100, fullscreen on|off, hotbar on|off.` }
     if (scene === 'debug') return { text: `${JSON.stringify(diag)} · ready ${s.ready} · demo ${s.demo} · hotbar ${hotbar} · band: ${JSON.stringify(seen)} · health ${s.health} · food ${s.food} · xp ${s.xpShown}` }
     if (scene === 'villager') {
       play($, pick(['villager1', 'villager2', 'villager3']))
       return { text: 'Hmm.' }
     }
     if (scene === 'totem') {
-      await overlay($, 0.6, ['totem'])
+      await overlay($, TOTEM_LOUDNESS, ['totem'])
       return { text: 'Totem of Undying.' }
     }
     if (scene === 'advancement') {
@@ -1582,7 +1399,10 @@ export const register: Register = (on, options) => {
     }
     if (scene === 'reset') {
       countdown($, now + 10_000)
-      later($, 10_000, () => void resetMoment($, `demo:${now}`))
+      later($, 10_000, () => {
+        void resetMoment($, `demo:${now}`)
+        void totemMoment($, `demo:${now}`)
+      })
     }
     if (scene === 'xp') await gainXP($, 3_000_000, false)
     if (scene === 'hardcore') s.hardcore = !s.hardcore
@@ -1599,7 +1419,7 @@ export const register: Register = (on, options) => {
     const usage = `${s.health * 5}% of your ${limitName()} left${s.resetAt ? ` · resets ${clock(s.resetAt)}` : ''}`
     const context = `${s.food * 5}% of context left`
     const seconds = Math.ceil((s.countdownTo - now) / 1000)
-    const soon = s.countdownTo > now ? `Totem of Undying in ${seconds}s: your limit is resetting` : ''
+    const soon = s.countdownTo > now ? `Totem of Undying in ${seconds}s: your weekly limit is resetting` : ''
 
     if (e.surface === 'terminal') {
       const { Box, Image, Text } = $.ui.resolve(e)
@@ -1625,32 +1445,32 @@ export const register: Register = (on, options) => {
     const { Box, Button, Svg, Text } = $.ui.resolve(e)
     const theirs = await next(e)
     seen = { bodyColumns: e.props.bodyColumns, viewport: e.viewport ?? null }
-    // The band's width, about 8 px a column, less a margin; the hotbar takes its own drawn width.
-    const room = (Math.max(420, (e.props.bodyColumns || 95) * 8 - 8) - (hotbar ? BAR_W * HOTBAR_SCALE : 0)) / SCALE
-    const g = 2 + 10 * Math.floor((room - 2) / 10)
-    // The hotbar: each slot is its picture with a button laid over it. The app
-    // lets no picture take a click, so the button does: its label is blank braille
-    // cells, which draw nothing but give it a slot's width, and the app's own
-    // pointer highlight on it stands in for the game's slot highlight.
-    // One blank braille cell: a longer label is wider than a slot, and the desktop cuts it to an ellipsis.
+    // The desktop reports the band in text columns, not pixels. The HUD is drawn
+    // for a little more than it can hold and given no width of its own, so the
+    // desktop shrinks it to the room the hotbar leaves: it always meets both edges.
+    const room = ((e.props.bodyColumns || 95) + 5) * PX_PER_COLUMN - (hotbar ? BAR_W * HOTBAR_SCALE : 0)
+    const g = Math.max(182, Math.floor(room / SCALE))
+    // The hotbar: each slot is its picture with buttons laid over it, from its
+    // left edge to its right. The app lets no picture take a click, so buttons
+    // do: their labels are blank braille cells, which draw nothing, and a slot
+    // holds as many as cover it, the rest clipped (a longer label would be cut
+    // to a visible ellipsis). Each slot's buttons start at its own edge, so
+    // nothing they measure can add up from one slot to the next.
     const BLANK = '\u2800'
     const slots = !hotbar
       ? null
       : h(
           Box,
-          { flexDirection: 'row' },
+          { flexDirection: 'row', flexShrink: 0 },
           ...SLOTS.map((slot, i) =>
             h(
               Box,
-              {},
+              { flexShrink: 0 },
               h(Svg, { source: tileSvg(i), alt: `${slot.name}: /minecraft ${slot.id}`, width: tileW(i) * HOTBAR_SCALE, height: BAR_H * HOTBAR_SCALE }),
               h(
                 Box,
-                // The desktop sizes a button to its label and cuts a longer one to an ellipsis, so a row of
-                // one-cell buttons covers the slot instead, the ones past its edge clipped away.
-                // One column (about 8 px) right of the slot's left edge: a spacer before the buttons moved them left instead.
-                { position: 'absolute', top: 0, left: 1, width: '100%', height: '100%', flexDirection: 'row', alignItems: 'center', overflow: 'hidden' },
-                ...Array.from({ length: 4 }, (_, n) =>
+                { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, flexDirection: 'row', alignItems: 'stretch', overflow: 'hidden' },
+                ...Array.from({ length: 3 }, (_, n) =>
                   h(
                     Box,
                     { flexShrink: 0 },
@@ -1678,17 +1498,16 @@ export const register: Register = (on, options) => {
         )
     record('drew', { at: Date.now(), g, hotbar, theirs: theirs === null || theirs === undefined ? 'nothing' : typeof theirs })
     return (
-      <Box flexDirection="column" alignItems="center">
-        <Box flexDirection="column" alignItems="flex-end">
-          <Box flexDirection="row" alignItems="flex-end">
-            <Box key="hud" flexDirection="column" alignItems="center">
-              <Box display="none" hover={{ display: 'flex' }}>
-                <Svg source={labelSvg(now, g)} alt={`${usage}. ${context}.`} width={g * SCALE} height={11 * SCALE} />
-              </Box>
-              <Svg source={hudSvg(now, g)} alt={`${usage}. ${context}. Level ${levelOf(s.xpShown).level}.`} width={g * SCALE} height={H * SCALE} />
+      <Box flexDirection="column">
+        <Box flexDirection="row" alignItems="flex-end">
+          <Box key="hud" flexDirection="column" flexGrow={1} flexShrink={1} minWidth={0}>
+            <Box display="none" flexDirection="column" hover={{ display: 'flex' }}>
+              {hotbar ? null : <Text dimColor>{`Hotbar hidden. ${HOTBAR_BACK}`}</Text>}
+              <Svg source={labelSvg(now, g)} alt={`${usage}. ${context}.`} />
             </Box>
-            {slots}
+            <Svg source={hudSvg(now, g)} alt={`${usage}. ${context}. Level ${levelOf(s.xpShown).level}.`} />
           </Box>
+          {slots}
         </Box>
         {s.dead ? <Text color="red">{`Out of your ${limitName()}.${s.resetAt ? ` Respawn at ${clock(s.resetAt)}.` : ''}`}</Text> : null}
         {soon ? <Text dimColor>{soon}</Text> : null}

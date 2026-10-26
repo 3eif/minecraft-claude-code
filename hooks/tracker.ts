@@ -91,23 +91,3 @@ export const isTest = (command: string) =>
 
 /** A test command with its changing parts dropped, so a rerun reads as the same command. */
 export const testKey = (command: string) => (/(?:npm|pnpm|yarn|bun|cargo|go|swift|mix|dotnet|gradle|make)\s+(?:run\s+)?test|vitest|jest|pytest|rspec|phpunit|xcodebuild/.exec(command)?.[0] ?? 'test')
-
-// ---------- what the enchanting table asks a model for ----------
-export const ENCHANTMENTS = [
-  { name: 'Clarity I', need: 1, desc: 'Tidy the wording and keep it short.', how: 'Tidy it: fix wording, grammar and ambiguity. Keep it about the same length and keep every request in it.' },
-  {
-    name: 'Clarity II',
-    need: 3,
-    desc: 'Restructure into goal, context and constraints.',
-    how: 'Restructure it into a clear prompt: the goal first, then the context a reader needs, then constraints. Short paragraphs or a brief list. Add nothing the author did not imply.',
-  },
-  {
-    name: 'Clarity III',
-    need: 5,
-    desc: 'A full brief with acceptance criteria and what to verify.',
-    how: 'Turn it into a full brief: the goal, context, constraints, acceptance criteria, and what to verify before calling it done. Where the author left a real decision open, say so as a question rather than guessing.',
-  },
-] as const
-
-export const enchantSystem = (how: string) =>
-  `You rewrite a prompt that a developer is about to send to a coding agent. ${how} Keep the author's intent, voice and every specific (names, paths, numbers). Reply with the rewritten prompt only: no preamble, no quotes, no explanation.`

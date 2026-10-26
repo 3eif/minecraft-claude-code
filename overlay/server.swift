@@ -81,12 +81,8 @@ func makeScreen(_ mode: String, _ json: String) -> Scene? {
         return DeathScene(title: d["title"] as? String ?? "You Died!", cause: d["cause"] as? String ?? "Claude was slain by the 5-hour limit",
                           score: d["score"] as? String ?? "0", label: d["label"] as? String ?? "Respawn")
     case "advancements": return AdvancementsScene(json)
-    case "enchant": return EnchantScene(json)
-    case "brew": return BrewScene(json)
-    case "map": return MapScene(json)
     case "jukebox": return JukeboxScene(json)
     case "guide": return GuideScene(json)
-    case "lectern": return LecternScene(json)
     case "options": return OptionsScene(json)
     default: return nil
     }

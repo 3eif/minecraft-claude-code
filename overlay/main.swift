@@ -39,8 +39,6 @@ func soundKind(_ name: String) -> String {
     if name.hasPrefix("toast") || name == "challenge_complete" { return "advancements" }
     if name == "use_totem" { return "totem" }
     if name.hasPrefix("villager") { return "villager" }
-    if name.hasPrefix("enchant") { return "enchant" }
-    if name.hasPrefix("brew") || name == "bottle" { return "brewing" }
     return name == "click" ? "clicks" : name
 }
 func playSound(_ name: String, volume: Float = 1) {
@@ -163,9 +161,9 @@ final class TotemScene: Scene {
     }
 
     func tick(_ n: Int, w: Double, h: Double) {
-        // TrackingEmitter: 30 ticks, 16 particles a tick.
+        // TrackingEmitter: 30 ticks, 16 particles a tick in the game; half as many here, over a desktop.
         if n < 30 {
-            for _ in 0..<16 {
+            for _ in 0..<8 {
                 let a = Double.random(in: 0..<(2 * .pi)), sp = Double.random(in: 8...30)
                 particles.append(P(x: w / 2 + cos(a) * w * Double.random(in: 0.05...0.32),
                                    y: h / 2 + sin(a) * h * Double.random(in: 0.05...0.32),
@@ -204,7 +202,8 @@ final class TotemScene: Scene {
             let s2 = abs(sin(f4 * 2))
             let x = Double(Int(w) / 2) + offX * Double(Int(w) / 4) * s2
             let y = Double(Int(h) / 2) + offY * Double(Int(h) / 4) * s2
-            let size = 50 + 175 * sin(f4)
+            // The game fills the view with it; over a whole desktop that is a jump scare, so it stays small.
+            let size = 24 + 72 * sin(f4)
             let yRot = 900 * abs(sin(f4)) * .pi / 180
             let wobble = 6 * cos(f * 8) * .pi / 180
             ctx.saveGState()
@@ -391,7 +390,13 @@ final class OverlayView: NSView {
     override func mouseDragged(with event: NSEvent) { pointer = gui(event) }
     override func mouseDown(with event: NSEvent) { pointer = gui(event); pressed = pointer; held = true }
     override func mouseUp(with event: NSEvent) { pointer = gui(event); held = false; released = true }
-    override func scrollWheel(with event: NSEvent) { scrolled += event.scrollingDeltaY * (event.hasPreciseScrollingDeltas ? 1 : 10) }
+    override func scrollWheel(with event: NSEvent) {
+        let k: CGFloat = event.hasPreciseScrollingDeltas ? 1 : 10
+        // A mouse wheel held with shift scrolls across, as it does elsewhere on the Mac.
+        if !event.hasPreciseScrollingDeltas && event.modifierFlags.contains(.shift) { scrolledX += event.scrollingDeltaY * k; return }
+        scrolled += event.scrollingDeltaY * k
+        scrolledX += event.scrollingDeltaX * k
+    }
     override var acceptsFirstResponder: Bool { true }
     override func keyDown(with event: NSEvent) {
         // On the death screen Return, Space or Escape press Respawn; the other screens read the keys themselves.
@@ -442,7 +447,7 @@ case "music":
     // Posting is asynchronous: give the notification a moment to leave.
     RunLoop.current.run(until: Date().addingTimeInterval(0.2))
     exit(0)
-case "advancements", "enchant", "brew", "map", "options", "jukebox", "guide", "lectern", "death":
+case "advancements", "options", "jukebox", "guide", "death":
     window.ignoresMouseEvents = false
     window.acceptsMouseMovedEvents = true
     interactive = true
