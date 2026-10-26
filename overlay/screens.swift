@@ -545,7 +545,7 @@ final class GuideScene: Scene {
 // MARK: the README's hero
 
 /// The README's first picture alone (mode "hero", MC_GUI_SCALE=1): Claude Code's
-/// prompt area drawn from scratch, large, with the HUD in its band above the input,
+/// prompt area drawn from scratch, large: the HUD in its band above the input,
 /// so the HUD reads at the README's width. The HUD at 6 pixels to the GUI pixel and
 /// the hotbar at 5, whole numbers so every edge is crisp.
 final class HeroScene: Scene {
@@ -581,15 +581,11 @@ final class HeroScene: Scene {
         let left: CGFloat = 160, width = w - 2 * left
         let grey = NSColor(white: 0.45, alpha: 1), faint = NSColor(white: 0.62, alpha: 1)
 
-        // The end of the conversation above the band.
-        label(ctx, "Done. The export button shows a spinner and stays disabled until the file is ready.", left + 30, 40, size: 34, color: NSColor(white: 0.13, alpha: 1))
-        label(ctx, "Edited ExportButton.tsx, ran the tests  +14 -1", left + 30, 100, size: 30, color: faint)
-
         // The band: its grey panel, the HUD at the left, the hotbar at the right.
         let k: CGFloat = 6, hk: CGFloat = 5, pad: CGFloat = 26
         let slots = ["knowledge_book", "jukebox", "parrot_spawn_egg", "comparator"]
         let barW = CGFloat(20 * slots.count + 2)
-        let panel = CGRect(x: left, y: 190, width: width, height: 22 * hk + 2 * pad)
+        let panel = CGRect(x: left, y: 40, width: width, height: 22 * hk + 2 * pad)
         rounded(ctx, panel, 34, fill: 0xF2F2F1)
         let g = ((width - 2 * pad - barW * hk - 24) / k).rounded(.down)
         ctx.saveGState(); ctx.translateBy(x: left + pad, y: panel.maxY - pad - 18 * k); ctx.scaleBy(x: k, y: k)
