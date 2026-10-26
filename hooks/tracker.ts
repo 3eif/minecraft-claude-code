@@ -17,7 +17,9 @@ export type Progress = {
 
 export const blank = (): Progress => ({ v: 2, earned: {}, n: {}, max: {}, sets: {} })
 
+// How many of each set are kept: enough to cover what any advancement counts in it.
 const SET_LIMIT = 400
+const SET_LIMITS: Record<string, number> = { starves: 2000 }
 
 /** What one chat has added since it last saved, laid over what the store holds. */
 export function merge(stored: Progress | undefined, mine: Progress): Progress {
@@ -26,7 +28,7 @@ export function merge(stored: Progress | undefined, mine: Progress): Progress {
   for (const key of new Set([...Object.keys(base.n ?? {}), ...Object.keys(mine.n)])) out.n[key] = (base.n?.[key] ?? 0) + (mine.n[key] ?? 0)
   for (const key of new Set([...Object.keys(base.max ?? {}), ...Object.keys(mine.max)])) out.max[key] = Math.max(base.max?.[key] ?? 0, mine.max[key] ?? 0)
   for (const key of new Set([...Object.keys(base.sets ?? {}), ...Object.keys(mine.sets)])) {
-    out.sets[key] = [...new Set([...(base.sets?.[key] ?? []), ...(mine.sets[key] ?? [])])].sort().slice(-SET_LIMIT)
+    out.sets[key] = [...new Set([...(base.sets?.[key] ?? []), ...(mine.sets[key] ?? [])])].sort().slice(-(SET_LIMITS[key] ?? SET_LIMIT))
   }
   // Saved before the regrouping: each id read as what it is now, and one removed since dropped.
   const was = Object.entries(base.earned ?? {})
@@ -43,8 +45,13 @@ export const day = (ms: number) => {
 /** How many days in a row end at `today`, in a list of dates. */
 export function streak(days: readonly string[], today: number) {
   const have = new Set(days)
+  const at = new Date(today)
   let run = 0
-  while (have.has(day(today - run * 86_400_000))) run++
+  // Back a calendar day at a time: a day is 23 or 25 hours long when the clocks change.
+  while (have.has(day(at.getTime()))) {
+    run++
+    at.setDate(at.getDate() - 1)
+  }
   return run
 }
 

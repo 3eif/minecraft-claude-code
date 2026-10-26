@@ -160,14 +160,17 @@ final class TotemScene: Scene {
         playSound("use_totem", volume: volume)
     }
 
+    func cx(_ w: Double) -> Double { (w / 2).rounded(.down) }
+    func cy(_ h: Double) -> Double { (h * 0.72).rounded(.down) }
+
     func tick(_ n: Int, w: Double, h: Double) {
-        // TrackingEmitter: 30 ticks, 16 particles a tick in the game; half as many here, over a desktop.
+        // TrackingEmitter: 30 ticks, 16 particles a tick in the game; a few here, close around the totem.
         if n < 30 {
-            for _ in 0..<8 {
-                let a = Double.random(in: 0..<(2 * .pi)), sp = Double.random(in: 8...30)
-                particles.append(P(x: w / 2 + cos(a) * w * Double.random(in: 0.05...0.32),
-                                   y: h / 2 + sin(a) * h * Double.random(in: 0.05...0.32),
-                                   vx: cos(a) * sp, vy: sin(a) * sp - 6,
+            for _ in 0..<3 {
+                let a = Double.random(in: 0..<(2 * .pi)), sp = Double.random(in: 3...10)
+                particles.append(P(x: cx(w) + cos(a) * Double.random(in: 4...28),
+                                   y: cy(h) + sin(a) * Double.random(in: 4...20),
+                                   vx: cos(a) * sp, vy: sin(a) * sp - 3,
                                    life: 60 + Int.random(in: 0..<12),
                                    color: Int.random(in: 0..<4) == 0 ? Int.random(in: 0..<3) : Int.random(in: 3..<12),
                                    size: Double.random(in: 5...12)))
@@ -200,10 +203,11 @@ final class TotemScene: Scene {
             let f3 = 10.25 * f2 * f1 - 24.95 * f1 * f1 + 25.5 * f2 - 13.8 * f1 + 4.0 * f
             let f4 = f3 * .pi
             let s2 = abs(sin(f4 * 2))
-            let x = Double(Int(w) / 2) + offX * Double(Int(w) / 4) * s2
-            let y = Double(Int(h) / 2) + offY * Double(Int(h) / 4) * s2
-            // The game fills the view with it; over a whole desktop that is a jump scare, so it stays small.
-            let size = 24 + 72 * sin(f4)
+            let x = cx(Double(w)) + offX * 12 * s2
+            let y = cy(Double(h)) + offY * 8 * s2
+            // The game fills the view with it; over a whole desktop that is a jump scare, so
+            // it rises small, low on the screen where the prompt usually is, and is gone in two seconds.
+            let size = 12 + 36 * sin(f4)
             let yRot = 900 * abs(sin(f4)) * .pi / 180
             let wobble = 6 * cos(f * 8) * .pi / 180
             ctx.saveGState()

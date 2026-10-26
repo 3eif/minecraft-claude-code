@@ -1,6 +1,6 @@
 import type { EngineInterface, Register, SessionContextUsage, SessionRateLimit } from 'claude-code'
 
-import { ADVANCEMENTS } from './advancements'
+import { ADVANCEMENTS, RENAMED } from './advancements'
 import { HOTBAR, ICONS } from './hotbar'
 import { DIGITS, PIX } from './pixels'
 import { GLYPH, GLYPH_W, SPR, XP_BG, XP_FILL } from './sprites'
@@ -77,6 +77,8 @@ function usePrefs(kept: Prefs | undefined) {
   if (typeof kept?.hotbar === 'boolean') hotbar = kept.hotbar
 }
 let timers: Timer[] = []
+// Whether this chat is in bypass permissions mode, as its last prompt said: /minecraft hardcore previews the look alone.
+let bypass = false
 let seen: unknown = null
 
 // ---------- advancements ----------
@@ -95,6 +97,8 @@ const failing = new Set<string>()
 const turn = { edits: 0, passed: false, committed: false, shipped: false, agents: 0, tools: 0, added: 0, removed: 0, inserted: 0, deleted: 0, failing: 0, testFailed: false, failedAny: false, tokens: 0, kinds: new Set<string>() }
 // What the secret advancements watch across a whole chat.
 const chatRun = { clean: 0, reverted: false, passedSince: false }
+// A git subcommand, however git was started: `git commit`, `git -C dir commit`, `git -c k=v push`.
+const git = (sub: string) => new RegExp(`\\bgit(?:\\s+(?:-[Cc]\\s+\\S+|--[\\w-]+(?:=\\S+)?))*\\s+(?:${sub})\\b`)
 const lineCount = (text: unknown) => (typeof text === 'string' && text ? text.split('\n').length : 0)
 const EDITS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit'])
 
@@ -214,7 +218,6 @@ async function tipOnce($: EngineInterface, id: string, title: string, icon: stri
 // A reply's size, by its edits or by what git counted, whichever saw more.
 function bigReply() {
   if (Math.max(turn.added + turn.removed, turn.inserted + turn.deleted) >= 10_000) award('0.debris')
-  if (Math.max(turn.removed - turn.added, turn.deleted - turn.inserted) >= 10_000) award('0.exile')
 }
 
 function later($: EngineInterface, ms: number, fn: () => void) {
@@ -241,32 +244,48 @@ const MAKE = 'mkdir -p "$(dirname "$0")" && mkdir "$0" 2>/dev/null'
 /** True in exactly one chat for each key: the first to ask. Kept two days. */
 async function claim($: EngineInterface, key: string) {
   const dir = await sharedDir($)
-  if (!dir) return true
+  if (!dir) return false
   const made = await $.process.run(['/bin/sh', '-c', MAKE, `${dir}/claims/${folderName(key)}`], { timeoutMs: 5000 }).catch(() => undefined)
-  // With no way to ask, every chat plays it, as before there was a record.
-  return made ? made.exitCode === 0 : true
+  // With no way to ask, no chat plays it: a moment missed beats one played in every chat.
+  return made?.exitCode === 0
 }
 
-/** Runs `fn` while no other chat runs one under the same name. */
-async function withLock<T>($: EngineInterface, name: string, fn: () => Promise<T>): Promise<T> {
+/**
+ * Runs `fn` while no other chat runs one under the same name. When another chat
+ * keeps the lock past three seconds, `fn` is not run and `undefined` comes back,
+ * unless `always`: then it runs unlocked, for a write better made late than lost.
+ */
+async function withLock<T>($: EngineInterface, name: string, fn: () => Promise<T>, always = false): Promise<T | undefined> {
   const dir = await sharedDir($)
   const lock = `${dir}/locks/${folderName(name)}`
   let held = false
+  let contended = false
   for (let tries = 0; dir && !held && tries < 60; tries++) {
     const made = await $.process.run(['/bin/sh', '-c', MAKE, lock], { timeoutMs: 5000 }).catch(() => undefined)
     if (!made) break
     held = made.exitCode === 0
     if (held) break
+    contended = true
     // A chat that quit while holding it leaves it behind: after ten seconds it is taken anyway.
     const since = await $.fs.stat(lock).then(st => Date.now() - st.mtimeMs, () => 0)
     if (since > 10_000) await $.process.run(['/bin/rmdir', lock], { timeoutMs: 5000 }).catch(() => undefined)
     else await $.clock.sleep(50)
   }
+  if (!held && contended && !always) return undefined
   try {
     return await fn()
   } finally {
     if (held) await $.process.run(['/bin/rmdir', lock], { timeoutMs: 5000 }).catch(() => undefined)
   }
+}
+
+let syncedAt = 0
+/** syncShared, at most every two seconds: called whenever this chat is drawn, replies or is sent a prompt. */
+function syncSoon($: EngineInterface) {
+  const now = Date.now()
+  if (now - syncedAt < 2000) return
+  syncedAt = now
+  void syncShared($).catch(() => undefined)
 }
 
 /** Takes up what other chats changed: the settings, and XP they earned. */
@@ -291,7 +310,61 @@ async function syncShared($: EngineInterface) {
 // The first read with nothing under the new key takes the old one up once.
 const PROGRESS = 'progress2'
 async function storedProgress($: EngineInterface) {
-  return ((await $.store.get(PROGRESS)) ?? (await $.store.get('progress'))) as Progress | undefined
+  const now = (await $.store.get(PROGRESS)) as Progress | undefined
+  const old = (await $.store.get('progress')) as Progress | undefined
+  if (!now || !old) return now ?? old
+  const earned = { ...now.earned }
+  for (const [id, at] of Object.entries(old.earned ?? {})) {
+    const to = RENAMED[id]
+    if (to) earned[to] = Math.min(earned[to] ?? at, at)
+  }
+  return { ...now, earned }
+}
+
+// Counts are saved a few seconds after they change, in one write, instead of at
+// every event: the store's lock costs two small processes. An advancement just
+// earned is saved at once, so its toast is not late, and a chat that ends saves
+// what it has first.
+let settleTimer: Timer | undefined
+function settleSoon($: EngineInterface) {
+  if (pending.length) {
+    settleTimer?.cancel()
+    settleTimer = undefined
+    void settle($)
+    return
+  }
+  settleTimer ??= $.clock.after(3000, () => {
+    settleTimer = undefined
+    void settle($)
+  })
+}
+
+// The days and hours worked with Claude, from a prompt or a reply. The shared
+// record is read first, so what other chats saw counts toward a streak, a month
+// or a night.
+async function noteActivity($: EngineInterface, now: number) {
+  saved = merge(await storedProgress($), blank())
+  const today = day(now)
+  const at = new Date(now)
+  const hour = at.getHours()
+  const seen = (set: string) => new Set([...(saved.sets[set] ?? []), ...(mine.sets[set] ?? [])])
+  if (!seen('first').size) once('first', today)
+  once('days', today)
+  if (hour >= 4 && hour < 7) once('earlies', today)
+  if (hour < 4) once('lates', today)
+  // Every hour from midnight to six, the same night.
+  if (hour < 6) {
+    once('nightHours', `${today}:${hour}`)
+    const hours = seen('nightHours')
+    if ([0, 1, 2, 3, 4, 5].every(h => hours.has(`${today}:${h}`))) award('4.sleep')
+  }
+  // The last day of a month, with every day of it worked.
+  const length = new Date(at.getFullYear(), at.getMonth() + 1, 0).getDate()
+  if (at.getDate() === length) {
+    const worked = seen('days')
+    const month = today.slice(0, 8)
+    if (Array.from({ length }, (_, i) => `${month}${String(i + 1).padStart(2, '0')}`).every(d => worked.has(d))) award('5.glow')
+  }
 }
 
 // Saves what this chat has counted on top of what the store holds, and shows
@@ -299,12 +372,12 @@ async function storedProgress($: EngineInterface) {
 // Another chat may have earned it first; the store is read again to see.
 async function settle($: EngineInterface) {
   if (!pending.length && !Object.keys(mine.n).length && !Object.keys(mine.max).length && !Object.keys(mine.sets).length) return
-  const now = await $.clock.now()
   const fresh = await withLock($, 'progress', async () => {
+  const now = await $.clock.now()
   const next = merge(await storedProgress($), mine)
   mine = blank()
   const first = next.sets.first?.[0]
-  if (first && now - Date.parse(first) >= 365 * 86_400_000) pending.push('4.birthday')
+  if (first && day(now) >= `${Number(first.slice(0, 4)) + 1}${first.slice(4)}`) pending.push('4.birthday')
   // Ten billion tokens in one day; only today's tally is kept.
   const today = `tokensOn:${day(now)}`
   for (const key of Object.keys(next.n)) if (key.startsWith('tokensOn:') && key !== today) delete next.n[key]
@@ -313,10 +386,20 @@ async function settle($: EngineInterface) {
   pending = []
   const earned = [...new Set([...named, ...due(next, now)])].filter(a => !next.earned[a.id])
   for (const a of earned) next.earned[a.id] = now
+  // What those earnings bring due in turn (the Deep Dark at 50, the catalogue at all).
+  for (let more = due(next, now); more.length; more = due(next, now)) {
+    for (const a of more) next.earned[a.id] = now
+    earned.push(...more)
+  }
   saved = next
   await $.store.set(PROGRESS, next)
   return earned
   })
+  // Another chat held the record: what this one counted stays, and is saved shortly.
+  if (!fresh) {
+    later($, 3000, () => settleSoon($))
+    return
+  }
   // A tab's first advancement only opens the tab: it is earned without a toast.
   // The rest show as the game shows them, stacked down the corner, each a beat
   // after the one above so their sounds do not land together.
@@ -400,8 +483,9 @@ async function gainXP($: EngineInterface, tokens: number, real = true) {
       if (Math.floor(stored) > s.xpShown) s.xpShown = Math.floor(stored)
       xpTotal = Math.max(0, stored) + tokens / XP_UNIT
       await $.store.set('xp2', { units: xpTotal })
-    })
+    }, true)
     if (s.xpShown > xpTotal) s.xpShown = Math.floor(xpTotal)
+    raise('level', levelOf(xpTotal).level)
   }
   const total = real ? xpTotal : s.xpShown + tokens / XP_UNIT
   let left = Math.floor(total) - Math.floor(s.xpShown)
@@ -419,12 +503,12 @@ async function gainXP($: EngineInterface, tokens: number, real = true) {
     later($, i * 2 * TICK, () => {
       s.xpAt = now + i * 2 * TICK
       const before = levelOf(s.xpShown).level
-      s.xpShown += orb
+      // Orbs of two gains flying at once never carry the bar past what was earned.
+      s.xpShown = real ? Math.min(s.xpShown + orb, Math.max(s.xpShown, Math.floor(xpTotal))) : s.xpShown + orb
       const level = levelOf(s.xpShown).level
       play($, 'orb', 0.1)
       // Levels are rare enough now that every one gets the chime.
       if (level > before) play($, 'levelup', 0.75)
-      if (real) raise('level', level)
       if (real && level > before) void tipOnce($, 'level', 'Level up!', 'experience_bottle', 'XP is based on the tokens you consume.')
       redraw($)
     }),
@@ -432,32 +516,47 @@ async function gainXP($: EngineInterface, tokens: number, real = true) {
 }
 
 // How a limit period ended, for Postmortal, Saved by the Bell and Revaulting:
-// read from the record every chat keeps of the period the hearts show, when a
-// later one replaces it, so it counts once however many chats are open and
-// whether or not one was open at the reset itself.
+// read from the record every chat keeps of each limit's period, when a later
+// one replaces it, so it counts once however many chats are open and whether
+// or not one was open at the reset itself.
 type Period = { resetAt: number; dead: boolean; health: number }
-let periodSaid = ''
-async function notePeriod($: EngineInterface, now: number, next: Period) {
-  const was = (await $.store.get('period')) as Period | undefined
-  if (was?.resetAt && next.resetAt > was.resetAt && now >= was.resetAt - 60_000 && (await claim($, `period:${was.resetAt}`))) {
-    if (was.dead) {
-      once('respawns', String(was.resetAt))
-      await $.store.set('cameBack', was.resetAt)
-    } else if (was.health > 0 && was.health <= 2) award('3.bell')
-    void settle($)
+type Periods = Partial<Record<'five_hour' | 'seven_day', Period>>
+let periodsSaid = ''
+async function notePeriods($: EngineInterface, now: number, plan: readonly SessionRateLimit[]) {
+  const was = ((await $.store.get('periods')) ?? {}) as Periods
+  const next: Periods = { ...was }
+  for (const limit of plan) {
+    const kind = limit.kind as keyof Periods
+    const resetAt = limit.resetsAt ? Date.parse(limit.resetsAt) : 0
+    if (!resetAt) continue
+    const left = Math.max(0, Math.ceil((100 - Math.min(100, limit.percentUsed)) / 5))
+    const old = was[kind]
+    // A stale reading from a chat behind the others never moves a record back.
+    if (old && resetAt < old.resetAt) continue
+    if (old && resetAt > old.resetAt && now >= old.resetAt - 60_000 && (await claim($, `period:${kind}:${old.resetAt}`))) {
+      if (old.dead) {
+        once('respawns', String(old.resetAt))
+        await $.store.set('cameBack', Math.max(old.resetAt, Number((await $.store.get('cameBack')) ?? 0)))
+      } else if (old.health > 0 && old.health <= 2) award('3.bell')
+      settleSoon($)
+    }
+    const same = old?.resetAt === resetAt
+    next[kind] = { resetAt, dead: limit.percentUsed >= 100 || (same && old.dead), health: same ? Math.min(old.health, left) : left }
   }
   const said = JSON.stringify(next)
-  if (said !== periodSaid && (!was || next.resetAt >= was.resetAt)) {
-    periodSaid = said
-    await $.store.set('period', next)
+  if (said !== periodsSaid) {
+    periodsSaid = said
+    await $.store.set('periods', next)
   }
 }
 
 // Revaulting: a prompt within a minute of a limit you hit coming back.
 async function backInTime($: EngineInterface, now: number) {
-  const period = (await $.store.get('period')) as Period | undefined
-  const back = Math.max(period?.dead ? period.resetAt : 0, Number((await $.store.get('cameBack')) ?? 0))
-  if (back && now >= back && now - back <= 60_000) award('5.revaulting')
+  const periods = ((await $.store.get('periods')) ?? {}) as Periods
+  const dead = Object.values(periods).filter(p => p?.dead).map(p => p!.resetAt)
+  for (const back of [...dead, Number((await $.store.get('cameBack')) ?? 0)]) {
+    if (back && now >= back && now - back <= 60_000) award('5.revaulting')
+  }
 }
 
 // The hearts refill when the limit they show resets. The totem is not played
@@ -485,14 +584,14 @@ function countdown($: EngineInterface, to: number) {
 
 // The Totem of Undying, when the weekly limit resets: once, in whichever chat
 // gets there first, quietly, and never over your typing.
-const TOTEM_LOUDNESS = 0.25
+const TOTEM_LOUDNESS = 0.15
 async function totemMoment($: EngineInterface, key: string) {
   const now = await $.clock.now()
   if (now - s.lastEdit < 3000) {
     later($, 1000, () => void totemMoment($, key))
     return
   }
-  if (key.startsWith('demo:') || (key === String(s.weekAt) && (await claim($, `totem:${key}`)))) await overlay($, TOTEM_LOUDNESS, ['totem'])
+  if (key.startsWith('demo:') || (await claim($, `totem:${Math.round(Number(key) / 3600_000)}`))) await overlay($, TOTEM_LOUDNESS, ['totem'])
 }
 
 function schedule($: EngineInterface, now: number) {
@@ -501,12 +600,17 @@ function schedule($: EngineInterface, now: number) {
   later($, s.resetAt - now + 1500, () => void resetMoment($, key))
 }
 
-function scheduleTotem($: EngineInterface, now: number) {
+let totemTimers: Timer[] = []
+function scheduleTotem($: EngineInterface, now: number, from: number) {
+  // The weekly reset moved later before it came: what was set for the old time is
+  // dropped. One that has come, or is a moment away, plays as set.
+  if (from > now + 5000) for (const timer of totemTimers) timer.cancel()
+  totemTimers = []
   if (s.weekAt <= now) return
   const key = String(s.weekAt)
   const wait = s.weekAt - now
-  if (wait > 10_000) later($, wait - 10_000, () => countdown($, s.weekAt))
-  later($, wait + 1500, () => void totemMoment($, key))
+  if (wait > 10_000) totemTimers.push($.clock.after(wait - 10_000, () => countdown($, s.weekAt)))
+  totemTimers.push($.clock.after(wait + 1500, () => void totemMoment($, key)))
 }
 
 // Context and usage both over 90%, bypass on, and three subagents running at once.
@@ -517,7 +621,7 @@ async function warPigs($: EngineInterface) {
 }
 
 async function howDid($: EngineInterface) {
-  if (s.demo || !s.hardcore || s.contextPct < 90 || s.limitPct < 90) return
+  if (s.demo || !bypass || s.contextPct <= 90 || s.limitPct <= 90) return
   const running = (await $.agent.list().catch(() => [])).filter(a => a.status === 'running').length
   if (running >= 3) award('3.howdid')
 }
@@ -535,21 +639,22 @@ async function applyUsage($: EngineInterface, context: SessionContextUsage, limi
   s.starving = used >= 85
   s.kind = top?.kind ?? ''
   const resetAt = top?.resetsAt ? Date.parse(top.resetsAt) : 0
-  if (resetAt) await notePeriod($, now, { resetAt, dead: percent >= 100, health })
+  await notePeriods($, now, plan)
   if (resetAt && resetAt !== s.resetAt) {
     s.resetAt = resetAt
     schedule($, now)
   }
   const weekAt = Date.parse(plan.find(l => l.kind === 'seven_day')?.resetsAt ?? '') || 0
   if (weekAt && weekAt !== s.weekAt) {
+    const from = s.weekAt
     s.weekAt = weekAt
-    scheduleTotem($, now)
+    scheduleTotem($, now, from)
   }
 
   award('3.food')
   if (used >= 50) award('3.home')
-  if (used >= 95) award('3.ice')
-  if (used >= 85 && chat) once('starves', chat)
+  if (used > 95) award('3.ice')
+  if (used > 85 && chat) once('starves', chat)
   // Both limits hit inside one weekly period: each death is filed under the week it fell in.
   const week = plan.find(l => l.kind === 'seven_day')?.resetsAt
   if (week) {
@@ -560,20 +665,20 @@ async function applyUsage($: EngineInterface, context: SessionContextUsage, limi
   if (top) {
     const window = `${top.kind}:${resetAt}`
     award('3.root')
-    if (s.ready && health < s.health) award('3.scratch')
+    if (health < 20) award('3.scratch')
     if (health <= 10) once('halves', window)
     if (health <= 4) once('edges', window)
     if (percent >= 100) {
       once('deaths', window)
       // Out within the first hour of the period: five hours or seven days before the reset.
       const start = resetAt - (top.kind === 'five_hour' ? 5 * 3600_000 : 7 * 86_400_000)
-      if (s.hardcore && resetAt && now - start <= 3600_000) award('3.gameover')
+      if (bypass && resetAt && now - start <= 3600_000) award('3.gameover')
     }
   }
   s.contextPct = used
   s.limitPct = percent
   await howDid($)
-  void settle($)
+  settleSoon($)
 
   if (s.ready && top && health < 20) void tipOnce($, 'hearts', 'Your hearts dropped', 'apple', `Hearts are your usage limit. You have used ${Math.round(percent)}% of it.`)
   if (used >= 85) void tipOnce($, 'hungry', "You're getting hungry", 'bread', 'The context window is 85% full. Compact soon to eat.')
@@ -1028,6 +1133,7 @@ async function showGuide($: EngineInterface) {
 
 async function showAdvancements($: EngineInterface) {
   await settle($)
+  saved = merge(await storedProgress($), blank())
   await screen($, 'advancements', tree(merge(saved, mine), await $.clock.now()))
 }
 
@@ -1084,7 +1190,8 @@ async function toggleParrot($: EngineInterface) {
 async function showJukebox($: EngineInterface) {
   const said = await screen($, 'jukebox', { announce: fullscreen && motion('nowplaying') })
   if (typeof said?.played === 'number' && said.played > 0) {
-    count('discs', said.played)
+    const discs = Array.isArray(said.discs) ? said.discs.filter((d): d is string => typeof d === 'string' && d.startsWith('music_disc_')) : []
+    if (discs.length) count('discs', discs.length)
     if (await parrotOut($)) award('4.parrots')
     if (Array.isArray(said.discs)) for (const disc of said.discs) if (typeof disc === 'string' && disc.startsWith('music_disc_')) once('discsHeard', disc)
     await settle($)
@@ -1125,6 +1232,7 @@ export const register: Register = (on, options) => {
     })
     startServer($)
     chat = await $.session.id()
+    chatTurns = Number((await $.store.get(`replies:${chat}`)) ?? 0)
     saved = merge(await storedProgress($), blank())
     const held = (await $.store.get('xp2')) as { units?: number } | undefined
     const old = (await $.store.get('xp')) as { xp?: number } | undefined
@@ -1146,9 +1254,9 @@ export const register: Register = (on, options) => {
     s.xpShown = Math.floor(xpTotal)
     usePrefs((await $.store.get('prefs')) as Prefs | undefined)
     await refresh($)
-    // Every chat looks at what the others changed every few seconds, and at the usage less often.
-    let beat = 0
-    timers.push($.clock.every(3000, () => void syncShared($).then(() => (++beat % 5 === 0 ? refresh($) : undefined)).catch(() => undefined)))
+    // Every chat takes up what the others changed whenever it is drawn, replies or is
+    // sent a prompt; this slow look is for a chat on screen that does none of those.
+    timers.push($.clock.every(30_000, () => void syncShared($).then(() => refresh($)).catch(() => undefined)))
     const dir = await sharedDir($)
     if (dir) await $.process.run(['/usr/bin/find', `${dir}/claims`, '-mindepth', '1', '-maxdepth', '1', '-mtime', '+2', '-exec', 'rmdir', '{}', '+'], { timeoutMs: 5000 }).catch(() => undefined)
     // The guide opens by itself once, on the first run anywhere, a moment after the chat appears.
@@ -1173,18 +1281,29 @@ export const register: Register = (on, options) => {
     if (!e.agentId) {
       count('turns')
       if (++chatTurns >= 200) award('4.serious')
+      if (chat) await $.store.set(`replies:${chat}`, chatTurns)
+      // Judged on the whole reply: a failure late in it, or lines added back, count against it.
+      if (turn.tools >= 100 && !turn.failedAny) award('5.thanks')
+      if (Math.max(turn.removed - turn.added, turn.deleted - turn.inserted) >= 10_000) award('0.exile')
+      if (/you(?:'|\u2019| a)re absolutely right/i.test(e.answer ?? '')) award('4.bullseye')
+      await noteActivity($, await $.clock.now())
+    } else {
+      // A subagent finishing: the others still running are counted.
+      void warPigs($)
     }
     if (usage) {
       // Every token consumed, cache reads included, so the count matches what usage tools report.
       const tokens = usage.input_tokens + usage.output_tokens + usage.cache_creation_input_tokens + (usage.cache_read_input_tokens ?? 0)
       count('tokens', tokens / 1000)
-      turn.tokens += tokens
-      if (turn.tokens >= 100_000_000) award('5.mint')
+      if (!e.agentId) {
+        turn.tokens += tokens
+        if (turn.tokens >= 100_000_000) award('5.mint')
+      }
       count(`tokensOn:${day(await $.clock.now())}`, tokens / 1000)
       await gainXP($, tokens)
     }
-    if (/you(?:'|\u2019| a)re absolutely right/i.test(e.answer ?? '')) award('4.bullseye')
-    await settle($)
+    settleSoon($)
+    syncSoon($)
 
     return next(e)
   })
@@ -1195,7 +1314,7 @@ export const register: Register = (on, options) => {
       count('compacts')
       void tipOnce($, 'apple', 'Golden apple!', 'golden_apple', 'Compacting refilled your hunger bar.')
       if (e.trigger === 'auto') count('autos')
-      void settle($)
+      settleSoon($)
     }
 
     return next(e)
@@ -1203,9 +1322,13 @@ export const register: Register = (on, options) => {
 
   // A new chat after /clear: its own turn count. The level stays.
   on('session.end', async ($, e, next) => {
+    await settle($)
     if (e.reason === 'clear') {
       chatTurns = 0
       folders.clear()
+      editsSinceTest = 0
+      failedSinceEdits = false
+      failing.clear()
       Object.assign(chatRun, { clean: 0, reverted: false, passedSince: false })
     }
 
@@ -1220,42 +1343,27 @@ export const register: Register = (on, options) => {
 
   // Bypass mode is hardcore: the hearts change and death reads "Game Over!".
   on('classic.UserPromptSubmit', async ($, e, next) => {
+    syncSoon($)
     const hardcore = e.permission_mode === 'bypassPermissions'
+    bypass = hardcore
     if (!s.demo && hardcore !== s.hardcore) {
       s.hardcore = hardcore
       redraw($)
     }
     const said = typeof e.prompt === 'string' ? e.prompt.trim() : ''
     const now = await $.clock.now()
-    const hour = new Date(now).getHours()
     Object.assign(turn, { edits: 0, passed: false, committed: false, shipped: false, agents: 0, tools: 0, added: 0, removed: 0, inserted: 0, deleted: 0, failing: 0, testFailed: false, failedAny: false, tokens: 0, kinds: new Set<string>() })
     count('prompts')
     if (/\b(please|thanks|thank you)\b/i.test(said)) count('polite')
-    // Back after a week or more with no prompt at all.
-    const before = [...(saved.sets.days ?? []), ...(mine.sets.days ?? [])].filter(d => d !== day(now)).sort()
-    const last = before[before.length - 1]
-    if (last && now - new Date(`${last}T00:00`).getTime() >= 8 * 86_400_000) award('5.sweet')
-    once('days', day(now))
+    // Back after a week or more with no prompt in any chat.
+    const lastPrompt = Number((await $.store.get('lastPromptAt')) ?? 0)
+    if (lastPrompt && now - lastPrompt >= 7 * 86_400_000) award('5.sweet')
+    await $.store.set('lastPromptAt', now)
     const at = new Date(now)
     if (at.getHours() === 3 && at.getMinutes() === 33) award('5.spooky')
     await backInTime($, now)
-    // The last day of a month, with every day of it worked.
-    const length = new Date(at.getFullYear(), at.getMonth() + 1, 0).getDate()
-    if (at.getDate() === length) {
-      const worked = new Set([...(saved.sets.days ?? []), ...(mine.sets.days ?? [])])
-      const month = day(now).slice(0, 8)
-      if (Array.from({ length }, (_, i) => `${month}${String(i + 1).padStart(2, '0')}`).every(d => worked.has(d))) award('5.glow')
-    }
-    if (!saved.sets.first?.length) once('first', day(now))
-    if (hour >= 4 && hour < 7) once('earlies', day(now))
-    if (hour < 4) once('lates', day(now))
-    // Every hour from midnight to six, the same night.
-    if (hour < 6) {
-      once('nightHours', `${day(now)}:${hour}`)
-      const seen = new Set([...(saved.sets.nightHours ?? []), ...(mine.sets.nightHours ?? [])])
-      if ([0, 1, 2, 3, 4, 5].every(h => seen.has(`${day(now)}:${h}`))) award('4.sleep')
-    }
-    void settle($)
+    await noteActivity($, now)
+    settleSoon($)
 
     return next(e)
   })
@@ -1278,7 +1386,6 @@ export const register: Register = (on, options) => {
     turn.kinds.add(tool)
     if (turn.kinds.size >= 15) award('5.furious')
     if (failed) turn.failedAny = true
-    else if (turn.tools >= 100 && !turn.failedAny) award('5.thanks')
     if (EDITS.has(tool) && !failed) {
       count('edits')
       turn.edits++
@@ -1302,8 +1409,8 @@ export const register: Register = (on, options) => {
       const path = typeof input.file_path === 'string' ? input.file_path : ''
       if (/\.(png|jpe?g|gif|webp)$/i.test(path)) award('2.bird')
     }
-    if (tool === 'WebFetch') count('fetches')
-    if (tool === 'Agent' || tool === 'Task') {
+    if (tool === 'WebFetch' && !failed) count('fetches')
+    if ((tool === 'Agent' || tool === 'Task') && !failed) {
       count('agents')
       if (++turn.agents >= 5) award('2.help')
     }
@@ -1337,29 +1444,32 @@ export const register: Register = (on, options) => {
         }
       }
       if (!failed) {
-        if (/\bgit\s+commit\b/.test(command)) {
+        if (git('commit').test(command) && !/--dry-run\b/.test(command)) {
           count('commits')
           once('commitDays', day(now))
           turn.committed = true
           if (chatRun.reverted && chatRun.passedSince) award('0.sender')
         }
         // What git counts at a commit: "12 insertions(+), 10500 deletions(-)".
-        if (/\bgit\s+(commit|merge|pull|revert|cherry-pick)\b/.test(command)) {
+        if (git('commit|merge|pull|revert|cherry-pick').test(command)) {
           turn.inserted += Number(/(\d+) insertions?\(\+\)/.exec(said)?.[1] ?? 0)
           turn.deleted += Number(/(\d+) deletions?\(-\)/.exec(said)?.[1] ?? 0)
           bigReply()
         }
-        if (/\bgit\s+(revert|reset\s+--hard)\b/.test(command)) Object.assign(chatRun, { reverted: true, passedSince: false })
+        if (git('revert').test(command)) Object.assign(chatRun, { reverted: true, passedSince: false })
+        // A revert, a passing test run and a commit in one command, in that order.
+        if (git('revert').test(command) && isTest(command) && git('commit').test(command)) award('0.sender')
         // A revert of a revert: git titles it Revert "Revert ...".
-        if (/\bgit\s+revert\b/.test(command) && /Revert \\*"Revert/.test(said)) award('5.blowback')
-        if (/\bgit\s+push\b/.test(command) && /\s(--force(-with-lease)?|-f)\b|\s\+\S/.test(command) && /\b(main|master)\b/.test(command)) award('0.frightening')
+        if (git('revert').test(command) && /Revert \\*"Revert/.test(said)) award('5.blowback')
+        if (git('push').test(command) && /\s(--force(-with-lease)?|-f)\b|\s\+\S/.test(command) && /(?:\s|:)(?:main|master)(?=\s|$)/.test(command)) award('0.frightening')
         if (/\bgh\s+pr\s+create\b/.test(command)) {
           count('prs')
           turn.shipped = true
         }
-        if (/\bgh\s+pr\s+merge\b/.test(command)) count('merges')
+        // --auto only queues the merge: it may never happen.
+        if (/\bgh\s+pr\s+merge\b/.test(command) && !/--auto\b/.test(command)) count('merges')
       }
-      if (/\bgit\s+(merge|rebase|pull|cherry-pick|stash\s+pop)\b/.test(command) && JSON.stringify(ran).includes('CONFLICT')) award('0.sticky')
+      if (git('merge|rebase|pull|cherry-pick|stash\\s+pop').test(command) && JSON.stringify(ran).includes('CONFLICT')) award('0.sticky')
       if (turn.edits > 0 && turn.passed && turn.committed && turn.shipped) award('0.twobirds')
     }
 
@@ -1367,11 +1477,13 @@ export const register: Register = (on, options) => {
   })
 
   // A villager's "hmm" whenever Claude stops to ask you something.
-  on('tool.call', { tool: 'AskUserQuestion' }, ($, e, next) => {
+  on('tool.call', { tool: 'AskUserQuestion' }, async ($, e, next) => {
     play($, pick(['villager1', 'villager2', 'villager3']))
-    count('questions')
+    const ran = await next(e)
+    const asked = (e as unknown as { questions?: unknown }).questions
+    if (!('isError' in ran && ran.isError === true)) count('questions', Array.isArray(asked) ? Math.max(1, asked.length) : 1)
 
-    return next(e)
+    return ran
   })
 
   // /minecraft <moment> previews a moment with made-up figures; /minecraft live returns.
@@ -1442,6 +1554,7 @@ export const register: Register = (on, options) => {
     }
     if (scene === 'live') {
       s.demo = false
+      s.hardcore = bypass
       s.dead = false
       s.starving = false
       await refresh($)
@@ -1475,6 +1588,7 @@ export const register: Register = (on, options) => {
   })
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
+    syncSoon($)
     record('asked', { at: Date.now(), surface: e.surface, ready: s.ready, survey: Boolean(e.props.hasSurvey), columns: e.props.bodyColumns })
     if (e.props.hasSurvey || !s.ready) return next(e)
     const now = await $.clock.now()

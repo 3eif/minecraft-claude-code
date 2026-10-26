@@ -206,6 +206,7 @@ final class Server {
     var showing: String? = nil      // the id of the request on screen
     var lastUsed = Date()
     var watcher: DispatchSourceFileSystemObject? = nil
+    var petWatcher: DispatchSourceFileSystemObject? = nil
     var timers: [Timer] = []
     var warm: AVAudioPlayer? = nil
     var moments: [Moment] = []
@@ -226,10 +227,13 @@ final class Server {
     func start() {
         claim()
         signal(SIGTERM) { _ in exit(0) }
-        // Every picture loaded once now, so the first frame of a screen has nothing to read.
-        if let walk = FileManager.default.enumerator(atPath: assets.path) {
-            for case let path as String in walk where path.hasSuffix(".png") { _ = image(path) }
-        }
+        // The pictures every screen draws, loaded now so a first frame has little to
+        // read; each screen's own are loaded the first time it opens, and kept.
+        let shared = ((try? FileManager.default.contentsOfDirectory(atPath: assets.path)) ?? []).filter { $0.hasSuffix(".png") }
+            + ["gui/sprites/widget", "gui/sprites/container", "gui/sprites/toast"].flatMap { dir in
+                ((try? FileManager.default.contentsOfDirectory(atPath: assets.appendingPathComponent(dir).path)) ?? []).filter { $0.hasSuffix(".png") }.map { "\(dir)/\($0)" }
+            }
+        for path in shared { _ = image(path) }
         for name in (try? FileManager.default.contentsOfDirectory(atPath: assets.appendingPathComponent("sounds").path)) ?? [] where name.hasSuffix(".wav") {
             soundData[String(name.dropLast(4))] = try? Data(contentsOf: assets.appendingPathComponent("sounds/\(name)"))
         }
@@ -263,9 +267,17 @@ final class Server {
         }
         beat()
         timers.append(Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in self?.beat() })
-        // The watcher can miss a write; a slow look now and then catches it.
-        timers.append(Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in self?.poll() })
-        timers.append(Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in self?.syncPet() })
+        // The parrot's file is watched the same way, its folder being where it is replaced.
+        let cacheFd = open(cacheDir.path, O_EVTONLY)
+        if cacheFd >= 0 {
+            let source = DispatchSource.makeFileSystemObjectSource(fileDescriptor: cacheFd, eventMask: .write, queue: .main)
+            source.setEventHandler { [weak self] in self?.syncPet() }
+            source.setCancelHandler { close(cacheFd) }
+            source.resume()
+            petWatcher = source
+        }
+        // Either watcher can miss a write; a slow look now and then catches it.
+        timers.append(Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in self?.poll(); self?.syncPet() })
         syncPet()
         poll()
     }
