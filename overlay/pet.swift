@@ -125,6 +125,8 @@ final class ParrotPet {
         window.backgroundColor = .clear
         window.hasShadow = false
         window.level = .floating
+        // Closing a screen hides the helper to hand the focus back; the parrot stays.
+        window.canHide = false
         window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
         view = PetView(frame: NSRect(origin: .zero, size: size))
         view.backgroundColor = .clear

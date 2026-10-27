@@ -41,6 +41,8 @@ func overlayWindow() -> OverlayWindow {
     // Floating, so the host does not bury it; a screen closes when another app comes forward.
     window.level = .floating
     window.ignoresMouseEvents = true
+    // Closing a screen hides the helper to hand the focus back; a toast still sliding stays.
+    window.canHide = false
     window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
     return window
 }
