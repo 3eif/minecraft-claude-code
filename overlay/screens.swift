@@ -393,9 +393,20 @@ final class OptionsScene: Scene {
 
     func done(_ t: Double) {
         guard closingAt == nil else { return }
-        emit(["sounds": volume > 0, "volume": volume, "fullscreen": fullscreen, "hotbar": hotbar, "resetXp": resetXp,
-              "muted": muted.sorted(), "still": still.sorted()])
         closingAt = t
+    }
+
+    /// Every change takes effect at once: the helper's own sounds follow it, and the
+    /// choices are the screen's answer however it closes (Done, Escape, another app).
+    var said: NSDictionary? = nil
+    func apply() {
+        let now: NSDictionary = ["sounds": volume > 0, "volume": volume, "fullscreen": fullscreen, "hotbar": hotbar, "resetXp": resetXp,
+                                 "muted": muted.sorted(), "still": still.sorted()]
+        guard now != said else { return }
+        said = now
+        masterVolume = Float(volume)
+        mutedKinds = muted
+        emit(now)
     }
 
     /// Two columns of ON/OFF buttons, one per entry, toggling membership of `set` (in the set means OFF).
@@ -441,6 +452,7 @@ final class OptionsScene: Scene {
             }
             if button(ctx, CGRect(x: cx - 100, y: top + 120, width: 200, height: 20), "Done") || back { done(t) }
         }
+        apply()
         if let at = closingAt, t - at > 0.25 { finished = true }
         if t > 590 { finished = true }
         endFrame()
