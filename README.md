@@ -65,7 +65,7 @@ Everything lives under `/minecraft`.
 
 | Where | What to do |
 |---|---|
-| **Any screen** | `Esc` closes it; so does a click outside the tree or the jukebox |
+| **Any screen** | Opens over Claude's window. `Esc` closes it; so does a click outside the tree or the jukebox, or switching to another app |
 | **Advancements** | Drag, scroll or swipe to move around; `L` closes it, as in the game |
 | **Jukebox** | `Space` pauses; click or drag the track to seek; `Delete` leaves an album; `E` closes it |
 | **Music, anywhere** | The keyboard's play/pause and skip keys, Control Center's Now Playing, and headphone taps control the jukebox |
@@ -80,7 +80,7 @@ The mod is two parts.
 
 **The hooks** (`hooks/`) run inside Claude Code. They draw the HUD and hotbar, read your usage, context and tokens as Claude Code reports them, count what Claude does (edits, commits, tests, tools), and award advancements. Every open chat runs its own copy and they share one record, so a setting changed in one chat shows in the others, and a moment like the totem plays once however many chats you have open.
 
-**The helper** (`overlay/MCOverlay`) is a small native Mac program, written in Swift, that draws everything outside the app window: the screens, the full-screen moments, the toasts, the parrot. There is nothing to install for it separately:
+**The helper** (`overlay/MCOverlay`) is a small native Mac program, written in Swift, that draws everything outside the app's own interface: the screens (over the window of the app Claude Code runs in), the full-screen moments, the toasts, the parrot. There is nothing to install for it separately:
 
 - It ships **prebuilt** in the plugin, one universal binary for Apple Silicon and Intel. `claude plugin install` downloads it with the rest of the plugin into `~/.claude/plugins/cache/`.
 - It isn't placed in Applications, has no Dock icon, adds no login item, and asks for no permissions. The hooks start it the first time a chat needs it.

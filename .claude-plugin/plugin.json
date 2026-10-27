@@ -1,6 +1,6 @@
 {
   "name": "minecraft-hud",
-  "version": "1.4.1",
+  "version": "1.5.0",
   "description": "Minecraft's survival HUD for Claude Code: hearts for your usage limit, hunger for the context window, XP for tokens",
   "author": {
     "name": "Seif Abdelaziz"

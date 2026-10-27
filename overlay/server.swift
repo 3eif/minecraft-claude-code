@@ -29,7 +29,8 @@ func binaryStamp() -> String {
     return "\((at?[.systemFileNumber] as? Int) ?? 0):\(((at?[.modificationDate] as? Date)?.timeIntervalSince1970) ?? 0)"
 }
 
-/// A full-screen, see-through window above everything, on every Space.
+/// A see-through window on every Space. A screen's floats over the host's window
+/// (host.swift); a moment's is raised above everything and covers the display.
 func overlayWindow() -> OverlayWindow {
     let window = OverlayWindow(contentRect: frame, styleMask: .borderless, backing: .buffered, defer: false)
     window.isOpaque = false
@@ -37,7 +38,8 @@ func overlayWindow() -> OverlayWindow {
     window.animationBehavior = .none
     window.backgroundColor = .clear
     window.hasShadow = false
-    window.level = .screenSaver
+    // Floating, so the host does not bury it; a screen closes when another app comes forward.
+    window.level = .floating
     window.ignoresMouseEvents = true
     window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
     return window
@@ -59,13 +61,6 @@ func currentScreen() -> NSScreen {
 func guiScale(_ f: NSRect) -> CGFloat {
     if let s = ProcessInfo.processInfo.environment["MC_GUI_SCALE"], let v = Double(s) { return CGFloat(v) }
     return CGFloat(max(2, min(Int(f.width / 320), Int(f.height / 240)) - 1))
-}
-
-/// Covers a display with the window and its view, at that display's scale.
-func place(_ window: NSWindow, _ view: OverlayView, on display: NSScreen, gui: CGFloat) {
-    if window.frame != display.frame { window.setFrame(display.frame, display: false) }
-    view.frame = NSRect(origin: .zero, size: display.frame.size)
-    view.gui = gui
 }
 
 /// A moment that plays over the screen and goes: totem [volume], advancement
@@ -104,6 +99,8 @@ var emitted: Any? = nil
 // MARK: frames
 
 var frames: Timer? = nil
+/// The main window's place over the host, while a screen is up.
+var bound: Binding? = nil
 var askedAt = Date()
 var shownMode = mode
 
@@ -116,6 +113,11 @@ func startFrames(_ done: @escaping () -> Void) {
             firstDrawn = true
             let line = "{\"mode\":\"\(shownMode)\",\"started\":\(Int(askedAt.timeIntervalSince1970 * 1000)),\"shown\":\(Int(Date().timeIntervalSince1970 * 1000)),\"active\":\(app.isActive)}"
             try? line.write(to: cacheDir.appendingPathComponent("timing.json"), atomically: true, encoding: .utf8)
+        }
+        if let bound {
+            bound.update(window, view)
+            // Another app came forward: the screen closes as Escape would close it.
+            if bound.wasFront, !bound.front { done(); return }
         }
         view.needsDisplay = true
         if view.scene.finished { done() }
@@ -180,6 +182,7 @@ final class Moment {
     init(_ scene: Scene, gui: CGFloat, on display: NSScreen) {
         view = OverlayView(frame: NSRect(origin: .zero, size: display.frame.size))
         place(window, view, on: display, gui: gui)
+        window.level = .screenSaver
         view.scene = scene
         window.contentView = view
         window.orderFrontRegardless()
@@ -217,6 +220,8 @@ final class Server {
     var petLock: Int32 = -1
     // The Claude processes using this server, each watched by the kernel for its exit.
     var hosts: [pid_t: DispatchSourceProcess] = [:]
+    // The app each runs in, over whose window screens are drawn.
+    var apps: [pid_t: pid_t] = [:]
     var everHosted = false
     let startedAt = Date()
     let startedStamp = binaryStamp()
@@ -313,11 +318,14 @@ final class Server {
         let gone = { [weak self] in
             source.cancel()
             self?.hosts[pid] = nil
+            self?.apps[pid] = nil
+            hostApps = Set(self?.apps.values.map { $0 } ?? [])
             try? FileManager.default.removeItem(at: file)
             self?.hostsChanged()
         }
         source.setEventHandler(handler: gone)
         hosts[pid] = source
+        if let app = hostApp(of: pid) { apps[pid] = app; hostApps.insert(app) }
         everHosted = true
         source.resume()
         // Already gone before the watch began: the kernel will not say so.
@@ -432,11 +440,12 @@ final class Server {
         if let click = req["click"] as? Double, click > 0 { playSound("click", volume: Float(click)) }
         emitted = nil
         keys = []; held = false; released = false; pressed = nil
-        // On the display in use now, at its scale.
-        let display = currentScreen()
-        place(window, view, on: display, gui: guiScale(display.frame))
+        // Over the host's window, at the largest scale it holds.
+        let at = spot()
+        place(window, view, at: at, gui: guiScale(at.rect))
+        bound = Binding(at)
         // Where the pointer is now, so whatever is under it lights up on the first frame.
-        let m = NSEvent.mouseLocation, f = display.frame
+        let m = NSEvent.mouseLocation, f = at.rect
         pointer = CGPoint(x: (m.x - f.minX) / view.gui, y: (f.maxY - m.y) / view.gui)
         view.scene = scene
         view.start = CACurrentMediaTime()
@@ -451,9 +460,10 @@ final class Server {
     func finish() {
         frames?.invalidate()
         frames = nil
+        bound = nil
         window.orderOut(nil)
-        // Hands the focus back to whatever had it before the screen.
-        app.hide(nil)
+        // Hands the focus back to whatever had it before the screen, unless another app has taken it.
+        if app.isActive { app.hide(nil) }
         if let id = showing { reply(id, ["result": emitted ?? NSNull()]) }
         showing = nil
         view.scene = IdleScene()

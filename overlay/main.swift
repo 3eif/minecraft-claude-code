@@ -1,5 +1,5 @@
 // MCOverlay: full-screen overlay that plays one Minecraft moment, or shows one
-// screen (screens.swift) until it is closed, and quits.
+// screen (screens.swift) over the host app's window until it is closed, and quits.
 //
 //   MCOverlay <assetsDir> totem [volume]
 //   MCOverlay <assetsDir> advancement <task|goal|challenge> <title> <itemIcon> [description]
@@ -526,6 +526,7 @@ view.gui = guiScale(frame)
 switch mode {
 case "totem", "advancement", "tip":
     view.gui = momentGui(mode, view.gui)
+    window.level = .screenSaver
     guard let scene = momentScene(Array(args[2...]), gui: view.gui) else { exit(2) }
     view.scene = scene
 case "player":
@@ -540,6 +541,13 @@ case "advancements", "options", "jukebox", "guide", "death", "hero":
     window.ignoresMouseEvents = false
     window.acceptsMouseMovedEvents = true
     interactive = true
+    // Over the window of the app that started the helper.
+    if ProcessInfo.processInfo.environment["MC_SNAPSHOT"] == nil {
+        if let host = hostApp(of: hostProcess()) { hostApps = [host] }
+        let at = spot()
+        place(window, view, at: at, gui: guiScale(at.rect))
+        bound = Binding(at)
+    }
     view.scene = makeScreen(mode, args.count > 3 ? args[3] : "{}")
     // Started cold: have the server ready for the next one.
     if ProcessInfo.processInfo.environment["MC_SNAPSHOT"] == nil { startServer() }
