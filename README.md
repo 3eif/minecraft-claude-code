@@ -65,7 +65,7 @@ Everything lives under `/minecraft`.
 
 | Where | What to do |
 |---|---|
-| **Any screen** | Opens over Claude's window. `Esc` closes it; so does a click outside the tree or the jukebox, or switching to another app |
+| **Any screen** | Opens over Claude's window and stays with it: another app goes in front of both, and the screen is there when you come back. `Esc` closes it; so does a click outside the tree or the jukebox |
 | **Advancements** | Drag, scroll or swipe to move around; `L` closes it, as in the game |
 | **Jukebox** | `Space` pauses; click or drag the track to seek; `Delete` leaves an album; `E` closes it |
 | **Music, anywhere** | The keyboard's play/pause and skip keys, Control Center's Now Playing, and headphone taps control the jukebox |

@@ -29,8 +29,7 @@ func binaryStamp() -> String {
     return "\((at?[.systemFileNumber] as? Int) ?? 0):\(((at?[.modificationDate] as? Date)?.timeIntervalSince1970) ?? 0)"
 }
 
-/// A see-through window on every Space. A screen's floats over the host's window
-/// (host.swift); a moment's is raised above everything and covers the display.
+/// A see-through window above everything, on every Space; a screen's is put in the host's layer instead (host.swift).
 func overlayWindow() -> OverlayWindow {
     let window = OverlayWindow(contentRect: frame, styleMask: .borderless, backing: .buffered, defer: false)
     window.isOpaque = false
@@ -38,8 +37,7 @@ func overlayWindow() -> OverlayWindow {
     window.animationBehavior = .none
     window.backgroundColor = .clear
     window.hasShadow = false
-    // Floating, so the host does not bury it; a screen closes when another app comes forward.
-    window.level = .floating
+    window.level = .screenSaver
     window.ignoresMouseEvents = true
     // Closing a screen hides the helper to hand the focus back; a toast still sliding stays.
     window.canHide = false
@@ -116,11 +114,7 @@ func startFrames(_ done: @escaping () -> Void) {
             let line = "{\"mode\":\"\(shownMode)\",\"started\":\(Int(askedAt.timeIntervalSince1970 * 1000)),\"shown\":\(Int(Date().timeIntervalSince1970 * 1000)),\"active\":\(app.isActive)}"
             try? line.write(to: cacheDir.appendingPathComponent("timing.json"), atomically: true, encoding: .utf8)
         }
-        if let bound {
-            bound.update(window, view)
-            // Another app came forward: the screen closes as Escape would close it.
-            if bound.wasFront, !bound.front { done(); return }
-        }
+        bound?.update(window, view)
         view.needsDisplay = true
         if view.scene.finished { done() }
     }
@@ -184,7 +178,6 @@ final class Moment {
     init(_ scene: Scene, gui: CGFloat, on display: NSScreen) {
         view = OverlayView(frame: NSRect(origin: .zero, size: display.frame.size))
         place(window, view, on: display, gui: gui)
-        window.level = .screenSaver
         view.scene = scene
         window.contentView = view
         window.orderFrontRegardless()
@@ -445,6 +438,7 @@ final class Server {
         // Over the host's window, at the largest scale it holds.
         let at = spot()
         place(window, view, at: at, gui: guiScale(at.rect))
+        layer(window, at)
         bound = Binding(at)
         // Where the pointer is now, so whatever is under it lights up on the first frame.
         let m = NSEvent.mouseLocation, f = at.rect
@@ -455,6 +449,7 @@ final class Server {
         app.unhideWithoutActivation()
         app.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
+        bound?.raise(window)
         window.makeFirstResponder(view)
         startFrames { [weak self] in self?.finish() }
     }
