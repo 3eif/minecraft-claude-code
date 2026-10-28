@@ -54,6 +54,7 @@ let sounds = true
 let volume = 1
 let fullscreen = true
 let hotbar = true
+let updates = true
 // Kinds of sound turned off in Music & Sounds, and moments turned off in
 // Accessibility (the HUD stays still for those).
 // The XP orbs' tick plays on every reply; it starts off, and Music & Sounds turns it on.
@@ -64,7 +65,7 @@ const soundKind = (name: string) =>
   /^hit/.test(name) ? 'damage' : /^eat|^burp/.test(name) ? 'eating' : name === 'orb' ? 'orbs' : name === 'levelup' ? 'xp'
     : /^toast|^challenge/.test(name) ? 'advancements' : name === 'use_totem' ? 'totem' : /^villager/.test(name) ? 'villager'
       : name === 'click' ? 'clicks' : name
-const prefs = () => ({ sounds, volume, fullscreen, hotbar, muted, still, orbsChosen: true })
+const prefs = () => ({ sounds, volume, fullscreen, hotbar, updates, muted, still, orbsChosen: true })
 type Prefs = Partial<ReturnType<typeof prefs>>
 function usePrefs(kept: Prefs | undefined) {
   if (Array.isArray(kept?.muted)) muted = kept.muted
@@ -75,6 +76,7 @@ function usePrefs(kept: Prefs | undefined) {
   if (typeof kept?.volume === 'number') volume = kept.volume
   if (typeof kept?.fullscreen === 'boolean') fullscreen = kept.fullscreen
   if (typeof kept?.hotbar === 'boolean') hotbar = kept.hotbar
+  if (typeof kept?.updates === 'boolean') updates = kept.updates
 }
 let timers: Timer[] = []
 // Whether this chat is in bypass permissions mode, as its last prompt said: /minecraft hardcore previews the look alone.
@@ -94,13 +96,20 @@ let chatTurns = 0
 let editsSinceTest = 0
 let failedSinceEdits = false
 const failing = new Set<string>()
-const turn = { edits: 0, passed: false, committed: false, shipped: false, agents: 0, tools: 0, added: 0, removed: 0, inserted: 0, deleted: 0, failing: 0, testFailed: false, failedAny: false, tokens: 0, kinds: new Set<string>() }
+const turn = { edits: 0, passed: false, committed: false, shipped: false, agents: 0, tools: 0, added: 0, removed: 0, inserted: 0, deleted: 0, failing: 0, testFailed: false, failedAny: false, tokens: 0, kinds: new Set<string>(), files: new Set<string>(), limitAt: -1 }
+// The model this chat last replied with, to see it change.
+let chatModel = ''
 // What the secret advancements watch across a whole chat.
 const chatRun = { clean: 0, reverted: false, passedSince: false }
 // A git subcommand, however git was started: `git commit`, `git -C dir commit`, `git -c k=v push`.
 const git = (sub: string) => new RegExp(`\\bgit(?:\\s+(?:-[Cc]\\s+\\S+|--[\\w-]+(?:=\\S+)?))*\\s+(?:${sub})\\b`)
 const lineCount = (text: unknown) => (typeof text === 'string' && text ? text.split('\n').length : 0)
 const EDITS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit'])
+// Package managers adding or removing a named package (a bare `npm install` names none).
+const PACKAGE = String.raw`(?:\s+-[-\w]+(?:=\S+)?)*\s+[@\w]`
+const WAX_ON = new RegExp(String.raw`\b(?:(?:npm|pnpm)\s+(?:install|i|add)|yarn\s+add|bun\s+(?:add|install|i)|cargo\s+add|pip3?\s+install|uv\s+(?:add|pip\s+install)|poetry\s+add|go\s+get|gem\s+install|brew\s+install)` + PACKAGE)
+const WAX_OFF = new RegExp(String.raw`\b(?:(?:npm|pnpm)\s+(?:uninstall|remove|rm|un)|(?:yarn|bun|cargo|poetry|uv)\s+remove|bun\s+rm|pip3?\s+uninstall|uv\s+pip\s+uninstall|gem\s+uninstall|brew\s+uninstall)` + PACKAGE)
+const DEPLOY = /\b(?:(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?deploy|vercel(?:\s+deploy)?\s+--prod|vercel\s+deploy|fly(?:ctl)?\s+deploy|wrangler\s+(?:pages\s+)?deploy|netlify\s+deploy|firebase\s+deploy|railway\s+up|gcloud\s+(?:app|run)\s+deploy|kubectl\s+apply|terraform\s+apply)\b/
 
 const count = (counter: string, by = 1) => {
   mine.n[counter] = (mine.n[counter] ?? 0) + by
@@ -213,6 +222,24 @@ async function tipOnce($: EngineInterface, id: string, title: string, icon: stri
   if (s.demo || (await $.store.get(`tip:${id}`)) || !(await claim($, `tip:${id}`))) return
   await $.store.set(`tip:${id}`, true)
   await overlay($, 1, ['tip', 'tip', title, icon, desc])
+}
+
+// Once a day one chat asks GitHub for the newest version, and a newer one is told once.
+const LATEST = 'https://raw.githubusercontent.com/3eif/minecraft-claude-code/main/.claude-plugin/plugin.json'
+const newer = (a: string, b: string) => {
+  const [x, y] = [a, b].map(v => v.split('.').map(Number))
+  for (let i = 0; i < 3; i++) if ((x?.[i] ?? 0) !== (y?.[i] ?? 0)) return (x?.[i] ?? 0) > (y?.[i] ?? 0)
+  return false
+}
+async function checkUpdate($: EngineInterface) {
+  if (!updates || s.demo || (await $.env.get('CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC'))) return
+  if (!(await claim($, `update:${day(await $.clock.now())}`))) return
+  const have = String(JSON.parse(await $.fs.read(`${$.plugin.root}/.claude-plugin/plugin.json`)).version ?? '')
+  const got = await $.http.fetch(LATEST)
+  const latest = got.ok ? String(JSON.parse(got.text).version ?? '') : ''
+  if (!latest || !newer(latest, have) || (await $.store.get('updateTold')) === latest) return
+  await $.store.set('updateTold', latest)
+  await overlay($, 1, ['tip', 'tip', 'Update Available', 'knowledge_book', `Version ${latest} is out. Update it from /plugin.`])
 }
 
 // A reply's size, by its edits or by what git counted, whichever saw more.
@@ -720,6 +747,7 @@ async function applyUsage($: EngineInterface, context: SessionContextUsage, limi
   }
   s.contextPct = used
   s.limitPct = percent
+  if (!s.demo && turn.limitAt >= 0 && percent - turn.limitAt >= 40) award('3.overkill')
   await howDid($)
   settleSoon($)
 
@@ -1202,6 +1230,7 @@ async function showOptions($: EngineInterface) {
   if (typeof chose.volume === 'number') volume = chose.volume
   fullscreen = chose.fullscreen !== false
   hotbar = chose.hotbar !== false
+  updates = chose.updates !== false
   const names = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [])
   muted = names(chose.muted)
   still = names(chose.still)
@@ -1307,6 +1336,7 @@ export const register: Register = on => {
     if (dir) await $.process.run(['/usr/bin/find', `${dir}/claims`, '-mindepth', '1', '-maxdepth', '1', '-mtime', '+2', '-exec', 'rmdir', '{}', '+'], { timeoutMs: 5000 }).catch(() => undefined)
     // The guide opens by itself once, on the first run anywhere, a moment after the chat appears.
     if (e.isInteractive && e.surface && !(await $.store.get('guided'))) later($, 3000, () => void showGuide($))
+    if (e.isInteractive) later($, 15_000, () => void checkUpdate($).catch(() => undefined))
     for (const key of await $.store.keys()) {
       const stamp = Number(/(\d{13})/.exec(key)?.[1] ?? 0)
       if (stamp && stamp < (await $.clock.now()) - 2 * 24 * 3600_000) await $.store.delete(key)
@@ -1337,6 +1367,12 @@ export const register: Register = on => {
       if (turn.tools >= 100 && !turn.failedAny) award('5.thanks')
       if (Math.max(turn.removed - turn.added, turn.deleted - turn.inserted) >= 10_000) award('0.exile')
       if (/you(?:'|\u2019| a)re absolutely right/i.test(e.answer ?? '')) award('4.bullseye')
+      if (e.reason === 'aborted') award('4.joke')
+      if (e.durationMs >= 3600_000) award('4.view')
+      if (Math.max(turn.removed - turn.added, turn.deleted - turn.inserted) > 0) count('lighter')
+      const model = await $.session.model()
+      if (chatModel && model !== chatModel) award('4.shiny')
+      chatModel = model
       await noteActivity($, await $.clock.now())
     } else {
       // A subagent finishing: the others still running are counted.
@@ -1381,6 +1417,7 @@ export const register: Register = on => {
       failedSinceEdits = false
       failing.clear()
       Object.assign(chatRun, { clean: 0, reverted: false, passedSince: false })
+      chatModel = ''
     }
 
     return next(e)
@@ -1403,7 +1440,7 @@ export const register: Register = on => {
     }
     const said = typeof e.prompt === 'string' ? e.prompt.trim() : ''
     const now = await $.clock.now()
-    Object.assign(turn, { edits: 0, passed: false, committed: false, shipped: false, agents: 0, tools: 0, added: 0, removed: 0, inserted: 0, deleted: 0, failing: 0, testFailed: false, failedAny: false, tokens: 0, kinds: new Set<string>() })
+    Object.assign(turn, { edits: 0, passed: false, committed: false, shipped: false, agents: 0, tools: 0, added: 0, removed: 0, inserted: 0, deleted: 0, failing: 0, testFailed: false, failedAny: false, tokens: 0, kinds: new Set<string>(), files: new Set<string>(), limitAt: s.ready ? s.limitPct : -1 })
     count('prompts')
     if (/\b(please|thanks|thank you)\b/i.test(said)) count('polite')
     // Back after a week or more with no prompt in any chat.
@@ -1445,6 +1482,12 @@ export const register: Register = on => {
       }
       if (tool === 'Write') turn.added += lineCount(input.content)
       bigReply()
+      const path = String(input.file_path ?? input.notebook_path ?? '')
+      turn.files.add(path)
+      if (turn.files.size >= 50) award('0.spreads')
+      if (/(?:^|\/)CLAUDE(?:\.local)?\.md$/.test(path)) award('0.books')
+      if (/\/(?:SKILL\.md|plugin\.json|hooks\.json)$|\/\.claude\/(?:skills|hooks|agents|commands)\//.test(path)) award('0.crafters')
+      if (/\.(?:css|scss|sass|less|styl)$/.test(path)) award('0.newlook')
     }
     const touched = typeof input.file_path === 'string' ? input.file_path : typeof input.notebook_path === 'string' ? input.notebook_path : ''
     if (touched.includes('/') && !failed && (tool === 'Read' || EDITS.has(tool))) {
@@ -1457,6 +1500,16 @@ export const register: Register = on => {
       if (/\.(png|jpe?g|gif|webp)$/i.test(path)) award('2.bird')
     }
     if (tool === 'WebFetch' && !failed) count('fetches')
+    if (!failed) {
+      if (tool === 'WebSearch') award('2.trader')
+      if (tool === 'Skill') award('2.enchanter')
+      if (tool.startsWith('mcp__')) award('2.brewery')
+      if (tool === 'EnterWorktree') award('2.trials')
+      if (tool === 'Grep' || tool === 'Glob') count('searches')
+      if (tool === 'SendMessage') award('2.friendship')
+      // Turned down, the plan comes back as an error.
+      if (tool === 'ExitPlanMode') award('0.aim')
+    }
     if ((tool === 'Agent' || tool === 'Task') && !failed) {
       count('agents')
       if (++turn.agents >= 5) award('2.help')
@@ -1515,6 +1568,13 @@ export const register: Register = on => {
         }
         // --auto only queues the merge: it may never happen.
         if (/\bgh\s+pr\s+merge\b/.test(command) && !/--auto\b/.test(command)) count('merges')
+        if (git('worktree\\s+add').test(command)) award('2.trials')
+        if (WAX_ON.test(command)) award('0.waxon')
+        if (WAX_OFF.test(command)) award('0.waxoff')
+        if (/\b(?:docker|podman)\s+(?:run|compose\s+up)\b|\bdocker-compose\s+up\b/.test(command)) award('2.bukkit')
+        if (DEPLOY.test(command)) award('2.city')
+        if (/\bgh\s+issue\s+close\b/.test(command)) count('issues')
+        if (git('bisect').test(command) && said.includes('is the first bad commit')) award('1.fishy')
       }
       if (git('merge|rebase|pull|cherry-pick|stash\\s+pop').test(command) && JSON.stringify(ran).includes('CONFLICT')) award('0.sticky')
       if (turn.edits > 0 && turn.passed && turn.committed && turn.shipped) award('0.twobirds')
