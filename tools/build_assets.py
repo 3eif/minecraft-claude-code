@@ -58,6 +58,10 @@ BLOCKS = {
  'jukebox': lambda: iso(B('jukebox_top'), B('jukebox_side'), B('jukebox_side')),
  'netherrack': lambda: iso(B('netherrack'), B('netherrack'), B('netherrack')),
  'note_block': lambda: iso(B('note_block'), B('note_block'), B('note_block')),
+ 'sculk_catalyst': lambda: iso(B('sculk_catalyst_top'), B('sculk_catalyst_side'), B('sculk_catalyst_side')),
+ 'crafter': lambda: iso(B('crafter_top'), B('crafter_north'), B('crafter_east')),
+ 'chiseled_bookshelf': lambda: iso(B('chiseled_bookshelf_top'), B('chiseled_bookshelf_occupied'), B('chiseled_bookshelf_side')),
+ 'purpur_block': lambda: iso(B('purpur_block'), B('purpur_block'), B('purpur_block')),
  'target': lambda: iso(B('target_top'), B('target_side'), B('target_side')),
 }
 P = {'.': None, 'k': '#1b1b1f', 'w': '#f2f2f2', 'g': '#80ff20', 'r': '#e8231c', 'R': '#8a1410', 'S': '#4a4a4a'}
@@ -77,7 +81,7 @@ def heart(layers):
     im = Image.new('RGBA', (16, 16), (0, 0, 0, 0))
     for l in layers: im.alpha_composite(load('gui/sprites/hud/heart/' + l), (3, 3))
     return im
-ALIAS = {'clock': 'clock_00', 'compass': 'compass_16', 'enchanted_golden_apple': 'golden_apple', 'map': 'filled_map'}
+ALIAS = {'clock': 'clock_00', 'compass': 'compass_16', 'enchanted_golden_apple': 'golden_apple', 'map': 'filled_map', 'recovery_compass': 'recovery_compass_00'}
 def icon(name):
     if name in BLOCKS: return BLOCKS[name]()
     if name in CUSTOM: return custom(CUSTOM[name])

@@ -370,7 +370,7 @@ final class OptionsScene: Scene {
                                            ("totem", "Totem"), ("villager", "Villager"), ("clicks", "Clicks")]
     static let motions: [(String, String)] = [("flash", "Damage Flash"), ("shake", "Low Health Shake"), ("hunger", "Hunger Shake"),
                                              ("regen", "Regeneration"), ("apple", "Eating Animation"), ("nowplaying", "Now Playing Text")]
-    var volume: Double, music = jukeboxVolume, fullscreen: Bool, hotbar: Bool
+    var volume: Double, music = jukeboxVolume, fullscreen: Bool, hotbar: Bool, updates: Bool
     var muted: Set<String>, still: Set<String>
     let level: Int
     var page = "main"
@@ -386,6 +386,7 @@ final class OptionsScene: Scene {
         volume = on ? data["volume"] as? Double ?? 1 : 0
         fullscreen = data["fullscreen"] as? Bool ?? true
         hotbar = data["hotbar"] as? Bool ?? true
+        updates = data["updates"] as? Bool ?? true
         muted = Set(data["muted"] as? [String] ?? [])
         still = Set(data["still"] as? [String] ?? [])
         level = data["level"] as? Int ?? 0
@@ -400,7 +401,7 @@ final class OptionsScene: Scene {
     /// choices are the screen's answer however it closes (Done, Escape, another app).
     var said: NSDictionary? = nil
     func apply() {
-        let now: NSDictionary = ["sounds": volume > 0, "volume": volume, "fullscreen": fullscreen, "hotbar": hotbar, "resetXp": resetXp,
+        let now: NSDictionary = ["sounds": volume > 0, "volume": volume, "fullscreen": fullscreen, "hotbar": hotbar, "updates": updates, "resetXp": resetXp,
                                  "muted": muted.sorted(), "still": still.sorted()]
         guard now != said else { return }
         said = now
@@ -445,12 +446,13 @@ final class OptionsScene: Scene {
             if button(ctx, CGRect(x: cx - 155, y: top + 48, width: 150, height: 20), "Full-Screen Moments: \(fullscreen ? "ON" : "OFF")") { fullscreen.toggle() }
             if button(ctx, CGRect(x: cx + 5, y: top + 48, width: 150, height: 20), "Hotbar: \(hotbar ? "ON" : "OFF")") { hotbar.toggle() }
             // The hotbar is how this screen is opened: with it hidden, the way back has to be said.
-            if !hotbar { centered(ctx, "Hidden. Type /minecraft hotbar on to bring it back.", cx, top + 100, 0xA0A0A0, shadow: false) }
             let label = resetXp ? "Level will reset to 0" : confirming ? "Click again to reset level \(level)" : "Reset XP Level..."
             if button(ctx, CGRect(x: cx - 155, y: top + 72, width: 310, height: 20), label, enabled: !resetXp) {
                 if confirming { resetXp = true } else { confirming = true }
             }
-            if button(ctx, CGRect(x: cx - 100, y: top + 120, width: 200, height: 20), "Done") || back { done(t) }
+            if button(ctx, CGRect(x: cx - 155, y: top + 96, width: 310, height: 20), "Update Alerts: \(updates ? "ON" : "OFF")") { updates.toggle() }
+            if !hotbar { centered(ctx, "Hidden. Type /minecraft hotbar on to bring it back.", cx, top + 124, 0xA0A0A0, shadow: false) }
+            if button(ctx, CGRect(x: cx - 100, y: top + 144, width: 200, height: 20), "Done") || back { done(t) }
         }
         apply()
         if let at = closingAt, t - at > 0.25 { finished = true }

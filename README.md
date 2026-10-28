@@ -35,7 +35,7 @@ Needs **macOS 12+** (Apple Silicon or Intel) and the **Claude Code desktop app**
 - **Totem of Undying** when your weekly limit resets: once, small, quiet.
 - **Golden apple** when a chat compacts, the **level-up** chime, a **villager's "hmm"** when Claude asks you something.
 
-**113 advancements** in six tabs (Building, Combat, Exploration, Survival, Habits, and The Deep Dark, which opens at 50). They start easy and run deep: the last tiers take a heavy user months, and some are secret. Each toast stays ten seconds, and hovering it shows a **Share** button; the tree shows when you earned each one and stars what's new.
+**137 advancements** in six tabs (Building, Combat, Exploration, Survival, Habits, and The Deep Dark, which opens at 50). They start easy and run deep: the last tiers take a heavy user months, and some are secret. Each toast stays ten seconds, and hovering it shows a **Share** button; the tree shows when you earned each one and stars what's new.
 
 ![An advancement toast with its Share button](docs/toast.png)
 
@@ -90,11 +90,13 @@ Want to build it yourself? `overlay/build.sh` (needs Xcode's command-line tools)
 
 ## Your data
 
-Nothing about you leaves your Mac; the only network use is the jukebox fetching music from Mojang when Minecraft isn't installed. Progress, XP and settings live in Claude Code's plugin storage, with a copy in `~/Library/Application Support/minecraft-hud/backup.json` (refreshed daily and on every advancement). If a reinstall, or installing from another marketplace, starts the mod empty, your progress comes back from that copy. Restarts, updates and switching Claude accounts keep everything; advancements belong to this Mac, not an account.
+Nothing about you leaves your Mac. The only network use is the jukebox fetching music from Mojang when Minecraft isn't installed, and a daily look at this repository's `plugin.json` for a newer version (Settings > Update Alerts turns it off). Progress, XP and settings live in Claude Code's plugin storage, with a copy in `~/Library/Application Support/minecraft-hud/backup.json` (refreshed daily and on every advancement). If a reinstall, or installing from another marketplace, starts the mod empty, your progress comes back from that copy. Restarts, updates and switching Claude accounts keep everything; advancements belong to this Mac, not an account.
 
 ## Updating
 
 Claude Code doesn't update plugins from GitHub marketplaces on its own. To have it do so, in Claude Code run `/plugin`, open **Marketplaces**, choose **minecraft-hud** and pick **Enable auto-update**. New versions then install in the background, and load after `/reload-plugins` or a restart.
+
+Either way, when a new version is out a toast says so, once.
 
 Or update by hand, then restart Claude Code:
 
