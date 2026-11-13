@@ -88,6 +88,7 @@ func makeScreen(_ mode: String, _ json: String) -> Scene? {
     case "jukebox": return JukeboxScene(json)
     case "guide": return GuideScene(json)
     case "options": return OptionsScene(json)
+    case "stats": return StatsScene(json)
     case "hero": return HeroScene(json)
     default: return nil
     }
@@ -349,10 +350,13 @@ final class Server {
             if let pid = pid_t(name.dropLast(".host".count)) { watchHost(pid, inbox.appendingPathComponent(name)) }
         }
         // A sound is all in its name, <id>~<sound>~<volume>.sound, so there is nothing to half-read.
+        // One ending ~away is for someone who has left: it plays only while no app Claude runs in is in front.
         for name in names where name.hasSuffix(".sound") {
             try? FileManager.default.removeItem(at: inbox.appendingPathComponent(name))
             let parts = name.dropLast(".sound".count).split(separator: "~")
-            if parts.count == 3, let volume = Float(parts[2]) { playRaw(String(parts[1]), volume); lastUsed = Date() }
+            let away = parts.count == 4 && parts[3] == "away"
+            guard parts.count == 3 || away, let volume = Float(parts[2]) else { continue }
+            if !away || frontHost() == nil { playRaw(String(parts[1]), volume); lastUsed = Date() }
         }
         for name in names where name.hasSuffix(".moment") {
             let url = inbox.appendingPathComponent(name)

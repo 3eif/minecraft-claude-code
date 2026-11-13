@@ -114,9 +114,46 @@ export function tree(p: Progress, now: number, seen = now) {
   }
 }
 
+/** What the Statistics screen lists, as the game's General tab does: each figure's name and its count. */
+export function stats(p: Progress, now: number): [string, string][] {
+  const whole = (counter: string) => String(Math.floor(figure(p, counter, now))).replace(/\B(?=(\d{3})+$)/g, ',')
+  return [
+    ['Playing since', p.sets.first?.[0] ?? day(now)],
+    ['Tokens used', short(figure(p, 'tokens', now) * 1000)],
+    ['Advancements made', `${figure(p, 'earned', now)}/${ADVANCEMENTS.length}`],
+    ['Days in a row', whole('dayStreak')],
+    ['Prompts sent', whole('prompts')],
+    ['Replies', whole('turns')],
+    ['Tool calls', whole('tools')],
+    ['Edits made', whole('edits')],
+    ['Commands run', whole('commands')],
+    ['Commands failed', whole('failures')],
+    ['Test runs passed', whole('passes')],
+    ['Test runs failed', whole('testFails')],
+    ['Commits', whole('commits')],
+    ['Pull requests opened', whole('prs')],
+    ['Pull requests merged', whole('merges')],
+    ['Subagents started', whole('agents')],
+    ['Web pages fetched', whole('fetches')],
+    ['Questions answered', whole('questions')],
+    ['Chats compacted', whole('compacts')],
+    ['Limits hit', whole('deaths')],
+    ['Music discs played', whole('discs')],
+  ]
+}
+
 // ---------- reading what a command was ----------
-export const isTest = (command: string) =>
-  /\b(npm|pnpm|yarn|bun)\s+(run\s+)?test\b|\b(vitest|jest|pytest|rspec|phpunit)\b|\b(cargo|go|swift|mix|dotnet|gradle|make)\s+test\b|\bxcodebuild\b.*\btest\b|\bgradlew\s+test\b/.test(command)
+// What may stand in front of a command and still leave it that command.
+const RUNNER = /^(?:\w+=\S*\s+|(?:sudo|time|env|npx|bunx|pnpx|timeout\s+\S+|(?:pnpm|yarn|bun)\s+(?:exec|dlx|x)|(?:uv|poetry|pipenv|pdm|hatch)\s+run|bundle\s+exec|python3?\s+-m)\s+)+/
+
+/** A command line's commands, one for each side of a `&&`, `;` or pipe, without what runs them. */
+export const segments = (command: string) => command.split(/&&|\|\||[;|\n]/).map(part => part.trim().replace(/^\(\s*/, '').replace(RUNNER, ''))
+
+// A test runner started, not its name passing by in a path or a search.
+const TEST =
+  /^(?:(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?test\b|(?:vitest|jest|pytest|unittest|rspec|phpunit|ctest|tox|nox)\b|(?:cargo|go|swift|mix|dotnet|gradle|make|deno|flutter|dart|rails|rake)\s+test\b|cargo\s+nextest\b|playwright\s+test\b|(?:\.\/)?mvnw?\s+(?:\S+\s+)*(?:test|verify)\b|xcodebuild\b.*\btest\b|(?:\.\/)?gradlew\s+(?:\S+\s+)*test\b)/
+const testRun = (command: string) => segments(command).map(part => TEST.exec(part)?.[0]).find(run => run !== undefined)
+export const isTest = (command: string) => testRun(command) !== undefined
 
 /** A test command with its changing parts dropped, so a rerun reads as the same command. */
-export const testKey = (command: string) => (/(?:npm|pnpm|yarn|bun|cargo|go|swift|mix|dotnet|gradle|make)\s+(?:run\s+)?test|vitest|jest|pytest|rspec|phpunit|xcodebuild/.exec(command)?.[0] ?? 'test')
+export const testKey = (command: string) => testRun(command)?.split(/\s+/).slice(0, 2).join(' ') ?? 'test'

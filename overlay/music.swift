@@ -8,6 +8,7 @@
 // for AVAudioPlayer.
 
 import AVFoundation
+import CryptoKit
 import Foundation
 
 let musicCache = cacheDir.appendingPathComponent("music")
@@ -45,14 +46,22 @@ func fetchIndex(_ done: @escaping (Bool) -> Void) {
     }
 }
 
+/// Whether a file is the object Mojang's index names: each is named by the SHA-1 of what it holds.
+func isObject(_ file: URL, _ hash: String) -> Bool {
+    guard let data = try? Data(contentsOf: file) else { return false }
+    return Insecure.SHA1.hash(data: data).map { String(format: "%02x", $0) }.joined() == hash
+}
+
 /// The track's file: there already, or fetched from Mojang into the cache. `done`
-/// runs on the main queue with its path, or nil when it could not be had.
+/// runs on the main queue with its path, or nil when it could not be had. A download
+/// that is not the file the index names (cut short, or changed on the way) is dropped
+/// before the decoder sees it.
 func fetchTrack(_ track: Track, _ done: @escaping (String?) -> Void) {
     if FileManager.default.fileExists(atPath: track.path) { done(track.path); return }
     guard let remote = track.url.flatMap(URL.init(string:)) else { done(nil); return }
     URLSession.shared.downloadTask(with: remote) { file, response, _ in
         var got: String? = nil
-        if let file, (response as? HTTPURLResponse)?.statusCode == 200 {
+        if let file, (response as? HTTPURLResponse)?.statusCode == 200, isObject(file, remote.lastPathComponent) {
             let dest = URL(fileURLWithPath: track.path)
             try? FileManager.default.createDirectory(at: dest.deletingLastPathComponent(), withIntermediateDirectories: true)
             try? FileManager.default.removeItem(at: dest)

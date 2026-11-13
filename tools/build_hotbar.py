@@ -48,7 +48,7 @@ def frag(im, k=1):
     return out if k == 1 else f'<g transform="scale({1 / k})">{out}</g>'
 
 hb = load('gui/sprites/hud/hotbar')
-SLOTS = 4; REGION = 90
+SLOTS = 5; REGION = 110
 # The game's nine slots cut down to SLOTS, its right cap kept.
 W = 20 * SLOTS + 2
 four = Image.new('RGBA', (W, 22)); four.paste(hb.crop((0, 0, W - 1, 22)), (0, 0)); four.paste(hb.crop((181, 0, 182, 22)), (W - 1, 0))
@@ -60,11 +60,12 @@ for i in range(SLOTS):
     pieces.append([4 + a, frag(four.crop((a, 0, b, 22)))])
 icons = {
   'advancements': frag(load('item/knowledge_book')),
+  'stats': frag(load('item/paper')),
   'music': frag(iso(load('block/jukebox_top'), load('block/jukebox_side'), load('block/jukebox_side')), 2),
   'parrot': frag(load('item/parrot_spawn_egg')),
   'settings': frag(load('item/comparator')),
 }
-src = ("// Generated from the local Minecraft 1.21.8 install: four hotbar slots, the\n// selection frame and the slot icons, as SVG path fragments. Blocks are drawn\n"
+src = ("// Generated from the local Minecraft 1.21.8 install: five hotbar slots, the\n// selection frame and the slot icons, as SVG path fragments. Blocks are drawn\n"
        "// as the inventory draws them, at two pixels to the GUI pixel. © Mojang;\n// personal use only.\n\n"
        f"// The hotbar cut into one piece a slot, each to be drawn at [x, 1] in the region.\nexport const HOTBAR: [number, string][] = {json.dumps(pieces)}\n\nexport const SELECTION = {json.dumps(frag(load('gui/sprites/hud/hotbar_selection')))}\n\n"
        f"export const ICONS: Record<string, string> = {json.dumps(icons, indent=1)}\n")

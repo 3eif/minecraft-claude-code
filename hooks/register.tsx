@@ -4,7 +4,7 @@ import { ADVANCEMENTS, RENAMED } from './advancements'
 import { HOTBAR, ICONS } from './hotbar'
 import { DIGITS, PIX } from './pixels'
 import { GLYPH, GLYPH_W, SPR, XP_BG, XP_FILL } from './sprites'
-import { blank, day, due, isTest, merge, testKey, tree, type Progress } from './tracker'
+import { blank, day, due, isTest, merge, segments, stats, testKey, tree, type Progress } from './tracker'
 
 // Minecraft's survival HUD above the prompt.
 //   hearts  = the usage limit that will stop you first (5-hour or weekly)
@@ -101,8 +101,21 @@ const turn = { edits: 0, passed: false, committed: false, shipped: false, agents
 let chatModel = ''
 // What the secret advancements watch across a whole chat.
 const chatRun = { clean: 0, reverted: false, passedSince: false }
+// A chat's counts, saved with each reply: a reload, an update or a resumed chat takes
+// them up where they were. No advancement counts past 150 folders.
+const chatKept = (at: number) => ({ n: chatTurns, at, run: { ...chatRun }, folders: [...folders].slice(0, 150), failing: [...failing], editsSinceTest, failedSinceEdits })
+function useChatKept(kept: Partial<ReturnType<typeof chatKept>> | number | undefined) {
+  // Once the reply count alone was kept, as a number.
+  chatTurns = typeof kept === 'number' ? kept : (kept?.n ?? 0)
+  if (typeof kept !== 'object') return
+  Object.assign(chatRun, kept.run)
+  for (const folder of kept.folders ?? []) folders.add(folder)
+  for (const key of kept.failing ?? []) failing.add(key)
+  editsSinceTest = kept.editsSinceTest ?? 0
+  failedSinceEdits = kept.failedSinceEdits === true
+}
 // A git subcommand, however git was started: `git commit`, `git -C dir commit`, `git -c k=v push`.
-const git = (sub: string) => new RegExp(`\\bgit(?:\\s+(?:-[Cc]\\s+\\S+|--[\\w-]+(?:=\\S+)?))*\\s+(?:${sub})\\b`)
+const git = (sub: string) => new RegExp(`\\bgit(?:\\s+(?:-[Cc]\\s+\\S+|--[\\w-]+(?:=\\S+)?))*\\s+(?:${sub})(?![\\w-])`)
 const lineCount = (text: unknown) => (typeof text === 'string' && text ? text.split('\n').length : 0)
 const EDITS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit'])
 // Package managers adding or removing a named package (a bare `npm install` names none).
@@ -166,24 +179,35 @@ const short = (n: number) =>
 const ORBS = [2477, 1237, 617, 307, 149, 73, 37, 17, 7, 3, 1]
 
 // ---------- outside the module ----------
+// The helper is a Mac program, and sounds and moments are for a chat someone is
+// at: one with a terminal or an app drawing it. On another system the moments stay
+// inside the app; a run nothing draws (claude -p) counts what it does and shows nothing.
+let mac = true
+let live = false
+const helper = () => mac && live
+
 const pick = (names: string[]) => names[Math.floor(Math.random() * names.length)] ?? names[0]!
 
-function play($: EngineInterface, name: string, gain = 1) {
-  if (!sounds || muted.includes(soundKind(name))) return
+// `away` is a sound for someone who has left, with its own switch in Music & Sounds:
+// the helper plays it only while the app Claude Code runs in is not in front, and
+// without the helper nothing can tell.
+function play($: EngineInterface, name: string, gain = 1, away = false) {
+  if (!live || !sounds || muted.includes(away ? 'done' : soundKind(name))) return
   // The screen server has every sound loaded and plays it at once; the app's own audio is a few hundred ms behind.
   void (async () => {
     const inbox = await serverInbox($)
-    if (inbox) await $.fs.write(`${inbox}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}~${name}~${(gain * volume).toFixed(3)}.sound`, '')
-    else await $.audio.play({ asset: `assets/sounds/${name}.wav` }, { gain: gain * volume })
+    if (inbox) await $.fs.write(`${inbox}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}~${name}~${(gain * volume).toFixed(3)}${away ? '~away' : ''}.sound`, '')
+    else if (!away) await $.audio.play({ asset: `assets/sounds/${name}.wav` }, { gain: gain * volume })
   })().catch(() => {})
 }
 
 // Starts the overlay helper detached: it plays one moment over the whole
 // screen, click-through, and quits.
 async function overlay($: EngineInterface, loudness: number, moment: string[]) {
-  // With full-screen moments off, each one stays inside the app: its sound,
-  // and a toast for an advancement.
-  if (!fullscreen) {
+  if (!live) return
+  // With full-screen moments off, or no helper to play them, each one stays inside
+  // the app: its sound, and a toast for an advancement.
+  if (!fullscreen || !helper()) {
     if (moment[0] === 'totem') play($, 'use_totem', loudness)
     if (moment[0] === 'tip') $.ui.toast(`${moment[2] ?? ''} ${moment[4] ?? ''}`)
     if (moment[0] === 'advancement') {
@@ -242,6 +266,17 @@ async function checkUpdate($: EngineInterface) {
   await overlay($, 1, ['tip', 'tip', 'Update Available', 'knowledge_book', `Version ${latest} is out. Update it from /plugin.`])
 }
 
+// What a chat does once someone is at it: the guide, on the first run anywhere, and
+// the day's look for a new version. The desktop app joins a chat after it starts
+// (session.attach), and at the start reads as nobody there.
+let greeted = false
+function greet($: EngineInterface) {
+  if (greeted) return
+  greeted = true
+  later($, 3000, () => void $.store.get('guided').then(guided => (guided ? undefined : showGuide($))).catch(() => undefined))
+  later($, 15_000, () => void checkUpdate($).catch(() => undefined))
+}
+
 // A reply's size, by its edits or by what git counted, whichever saw more.
 function bigReply() {
   if (Math.max(turn.added + turn.removed, turn.inserted + turn.deleted) >= 10_000) award('0.debris')
@@ -261,7 +296,7 @@ let sharedAt = ''
 async function sharedDir($: EngineInterface) {
   if (!sharedAt) {
     const home = (await $.env.get('HOME')) ?? ''
-    sharedAt = home ? `${home}/Library/Caches/minecraft-hud/shared` : ''
+    sharedAt = home ? `${home}/${mac ? 'Library/Caches' : '.cache'}/minecraft-hud/shared` : ''
   }
   return sharedAt
 }
@@ -356,7 +391,7 @@ async function storedProgress($: EngineInterface) {
 const KEPT = [PROGRESS, 'xp2', 'prefs', 'guided', 'treeSeenAt', 'lastPromptAt', 'cameBack']
 async function backupFile($: EngineInterface) {
   const home = (await $.env.get('HOME')) ?? ''
-  return home ? `${home}/Library/Application Support/minecraft-hud/backup.json` : ''
+  return home ? `${home}/${mac ? 'Library/Application Support' : '.local/share'}/minecraft-hud/backup.json` : ''
 }
 
 async function backUp($: EngineInterface, now: number) {
@@ -588,13 +623,13 @@ async function gainXP($: EngineInterface, tokens: number, real = true) {
 // one replaces it, so it counts once however many chats are open and whether
 // or not one was open at the reset itself.
 type Period = { resetAt: number; dead: boolean; health: number }
-type Periods = Partial<Record<'five_hour' | 'seven_day', Period>>
+type Periods = Partial<Record<string, Period>>
 let periodsSaid = ''
 async function notePeriods($: EngineInterface, now: number, plan: readonly SessionRateLimit[]) {
   const was = ((await $.store.get('periods')) ?? {}) as Periods
   const next: Periods = { ...was }
   for (const limit of plan) {
-    const kind = limit.kind as keyof Periods
+    const kind = limit.kind
     const resetAt = limit.resetsAt ? Date.parse(limit.resetsAt) : 0
     if (!resetAt) continue
     const left = Math.max(0, Math.ceil((100 - Math.min(100, limit.percentUsed)) / 5))
@@ -699,7 +734,7 @@ async function howDid($: EngineInterface) {
 async function applyUsage($: EngineInterface, context: SessionContextUsage, limits: readonly SessionRateLimit[]) {
   if (s.demo) return
   const now = await $.clock.now()
-  const plan = limits.filter(l => l.kind === 'five_hour' || l.kind === 'seven_day')
+  const plan = limits.filter(l => l.kind in LIMITS)
   const top = plan.reduce<SessionRateLimit | undefined>((a, b) => (!a || b.percentUsed > a.percentUsed ? b : a), undefined)
   const percent = top ? Math.min(100, top.percentUsed) : 0
   const health = Math.max(0, Math.ceil((100 - percent) / 5))
@@ -741,8 +776,8 @@ async function applyUsage($: EngineInterface, context: SessionContextUsage, limi
     if (percent >= 100) {
       once('deaths', window)
       // Out within the first hour of the period: five hours or seven days before the reset.
-      const start = resetAt - (top.kind === 'five_hour' ? 5 * 3600_000 : 7 * 86_400_000)
-      if (bypass && resetAt && now - start <= 3600_000) award('3.gameover')
+      const span = SPANS[top.kind]
+      if (bypass && resetAt && span && now - (resetAt - span) <= 3600_000) award('3.gameover')
     }
   }
   s.contextPct = used
@@ -802,7 +837,12 @@ const clock = (ms: number) => {
 // A reset later today reads as a time; one further off, as a weekday.
 const when = (ms: number, now: number) =>
   ms - now < 20 * 3600_000 ? clock(ms) : (['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][new Date(ms).getDay()] ?? clock(ms))
-const limitName = () => (s.kind === 'seven_day' ? 'weekly limit' : '5-hour limit')
+const LIMITS: Record<string, string> = { five_hour: '5-hour limit', seven_day: 'weekly limit', spend_limit: 'spend limit' }
+// How long each period runs, where it is known.
+const SPANS: Record<string, number> = { five_hour: 5 * 3600_000, seven_day: 7 * 86_400_000 }
+const limitName = () => LIMITS[s.kind] ?? 'usage limit'
+// An account that reports no limit keeps full hearts, and says why.
+const usageSaid = () => (s.kind ? `${s.health * 5}% of your ${limitName()} left` : 'No usage limit on this account')
 
 // `g` is the width in GUI pixels. The prompt box plays the hotbar: hearts sit
 // over its left end, hunger over its right, and the XP bar spans it.
@@ -840,7 +880,7 @@ function hudSvg(now: number, g: number) {
     `<title>${text.replace(/&/g, '&amp;').replace(/</g, '&lt;')}</title><rect x="${x}" y="${y}" width="${w}" height="${h}" fill="#000" fill-opacity="0"/>`
   const resets = s.resetAt ? ` Resets ${when(s.resetAt, now)}.` : ''
 
-  let out = `<g>${tip(`${s.health * 5}% of your ${limitName()} left.${resets}`, 0, 0, 82, 13)}`
+  let out = `<g>${tip(`${usageSaid()}.${resets}`, 0, 0, 82, 13)}`
   for (let i = 0; i < 10; i++) {
     const x = i * 8
     const j = i * 2
@@ -1062,8 +1102,9 @@ function labelSvg(now: number, g: number) {
       cx += textWidth(t)
     }
   }
-  const name = s.kind === 'seven_day' ? 'weekly' : '5-hour'
-  const left: Part[] = [[`${s.health * 5}%`, bright], [` ${name} limit`, dim], ...(s.resetAt ? ([[`, resets ${when(s.resetAt, now)}`, dim]] as Part[]) : [])]
+  const left: Part[] = s.kind
+    ? [[`${s.health * 5}%`, bright], [` ${limitName()}`, dim], ...(s.resetAt ? ([[`, resets ${when(s.resetAt, now)}`, dim]] as Part[]) : [])]
+    : [[usageSaid(), dim]]
   const right: Part[] = [[`${s.food * 5}%`, bright], [' context', dim]]
   write(left, 0)
   write(right, g - widthOf(right))
@@ -1076,6 +1117,7 @@ function labelSvg(now: number, g: number) {
 // into one tile a slot so each can tell the pointer is over it.
 const SLOTS = [
   { id: 'advancements', name: 'Advancements', short: 'Tree' },
+  { id: 'stats', name: 'Statistics', short: 'Stats' },
   { id: 'music', name: 'Jukebox', short: 'Music' },
   { id: 'parrot', name: 'Parrot', short: 'Parrot' },
   { id: 'settings', name: 'Settings', short: 'Settings' },
@@ -1114,6 +1156,7 @@ const helperOf = ($: EngineInterface) => [`${$.plugin.root}/overlay/MCOverlay`, 
 
 /** Starts the screen server if it is not running; returns at once. */
 const startServer = ($: EngineInterface) => {
+  if (!helper()) return
   const [bin, assets] = helperOf($)
   void $.process.run([bin, assets, 'serve'], { timeoutMs: 10_000 }).catch(() => undefined)
 }
@@ -1123,6 +1166,7 @@ const startServer = ($: EngineInterface) => {
 let alive = { at: 0, inbox: undefined as string | undefined }
 let startedServerAt = 0
 async function serverInbox($: EngineInterface) {
+  if (!helper()) return undefined
   const now = Date.now()
   if (now - alive.at < 2000) return alive.inbox
   alive = { at: now, inbox: undefined }
@@ -1170,7 +1214,7 @@ async function askServer($: EngineInterface, mode: string, spec: unknown, env: {
 // Shows one of the helper's screens over the whole display and waits for it to
 // close. Resolves with what the screen decided, or nothing if it was closed.
 async function screen($: EngineInterface, mode: string, spec: unknown) {
-  if (screenOpen) return undefined
+  if (screenOpen || !helper()) return undefined
   screenOpen = true
   try {
     await $.store.set('timing', { mode, pressed: pressedAt, launching: Date.now() })
@@ -1211,6 +1255,17 @@ async function showAdvancements($: EngineInterface) {
   await shown
 }
 
+// The lifetime figures, with what this chat has yet to save.
+async function statRows($: EngineInterface) {
+  await settle($)
+  saved = merge(await storedProgress($), blank())
+  return stats(merge(saved, mine), await $.clock.now())
+}
+
+async function showStats($: EngineInterface) {
+  await screen($, 'stats', { rows: await statRows($) })
+}
+
 async function clearXP($: EngineInterface) {
   xpTotal = 0
   s.xpShown = 0
@@ -1224,7 +1279,7 @@ async function showOptions($: EngineInterface) {
   // What another chat set last, so this one does not write over it.
   await syncShared($)
   const had = hotbar
-  const chose = await screen($, 'options', { ...prefs(), level: levelOf(xpTotal).level })
+  const chose = await screen($, 'options', { ...prefs(), level: levelOf(xpTotal).level, stats: await statRows($) })
   if (!chose) return
   sounds = chose.sounds !== false
   if (typeof chose.volume === 'number') volume = chose.volume
@@ -1275,9 +1330,11 @@ async function showJukebox($: EngineInterface) {
 
 // What a slot opens, by its button or by /minecraft <slot>.
 function open($: EngineInterface, id: string) {
+  if (!helper()) return 'The screens and the parrot need a Mac.'
   if (screenOpen) return 'A screen is already open.'
   if (id === 'parrot') void toggleParrot($)
   else if (id === 'advancements') void showAdvancements($)
+  else if (id === 'stats') void showStats($)
   else if (id === 'music') void showJukebox($)
   else if (id === 'help') void showGuide($)
   else void showOptions($)
@@ -1286,7 +1343,7 @@ function open($: EngineInterface, id: string) {
 }
 
 const DEMOS = ['damage', 'low', 'apple', 'starve', 'death', 'reset', 'totem', 'advancement', 'xp', 'villager', 'hardcore', 'hunger', 'live', 'debug']
-const SCREENS = ['help', 'parrot', 'advancements', 'music', 'settings', 'clear', 'reset all']
+const SCREENS = ['help', 'parrot', 'advancements', 'stats', 'music', 'settings', 'clear', 'reset all']
 
 // Sounds, volume and full-screen moments are set in the game's own Settings screen, kept in the store.
 export const register: Register = on => {
@@ -1294,6 +1351,7 @@ export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     for (const timer of timers) timer.cancel()
     timers = []
+    greeted = false
     ticker?.cancel()
     ticker = undefined
     await $.command.register({
@@ -1302,12 +1360,13 @@ export const register: Register = on => {
       argumentHint: `[${[...SCREENS, ...DEMOS].join('|')}]`,
       immediate: true,
     })
+    live = e.isInteractive || (await $.session.surfaces().catch(() => [])).length > 0
+    mac = (await $.process.run(['/usr/bin/uname', '-s'], { timeoutMs: 5000 }).then(ran => ran.stdout.trim(), () => '')) === 'Darwin'
     startServer($)
     chat = await $.session.id()
     const restored = await restore($).catch(() => '')
     if (restored) later($, 4000, () => $.ui.toast(restored))
-    const replies = (await $.store.get(`replies:${chat}`)) as { n?: number } | number | undefined
-    chatTurns = typeof replies === 'number' ? replies : (replies?.n ?? 0)
+    useChatKept((await $.store.get(`replies:${chat}`)) as Parameters<typeof useChatKept>[0])
     saved = merge(await storedProgress($), blank())
     const held = (await $.store.get('xp2')) as { units?: number } | undefined
     const old = (await $.store.get('xp')) as { xp?: number } | undefined
@@ -1334,9 +1393,7 @@ export const register: Register = on => {
     timers.push($.clock.every(30_000, () => void syncShared($).then(() => refresh($)).catch(() => undefined)))
     const dir = await sharedDir($)
     if (dir) await $.process.run(['/usr/bin/find', `${dir}/claims`, '-mindepth', '1', '-maxdepth', '1', '-mtime', '+2', '-exec', 'rmdir', '{}', '+'], { timeoutMs: 5000 }).catch(() => undefined)
-    // The guide opens by itself once, on the first run anywhere, a moment after the chat appears.
-    if (e.isInteractive && e.surface && !(await $.store.get('guided'))) later($, 3000, () => void showGuide($))
-    if (e.isInteractive) later($, 15_000, () => void checkUpdate($).catch(() => undefined))
+    if (live) greet($)
     for (const key of await $.store.keys()) {
       const stamp = Number(/(\d{13})/.exec(key)?.[1] ?? 0)
       if (stamp && stamp < (await $.clock.now()) - 2 * 24 * 3600_000) await $.store.delete(key)
@@ -1348,6 +1405,22 @@ export const register: Register = on => {
     }
 
     return next(e)
+  })
+
+  // The desktop app joins a chat after it has started.
+  on('session.attach', async ($, e, next) => {
+    live = true
+    startServer($)
+    greet($)
+
+    return next(e)
+  })
+
+  on('session.detach', async ($, e, next) => {
+    const ran = await next(e)
+    live = (await $.session.surfaces().catch(() => [])).length > 0
+
+    return ran
   })
 
   on('session.measure', async ($, e, next) => {
@@ -1362,7 +1435,9 @@ export const register: Register = on => {
     if (!e.agentId) {
       count('turns')
       if (++chatTurns >= 200) award('4.serious')
-      if (chat) await $.store.set(`replies:${chat}`, { n: chatTurns, at: await $.clock.now() })
+      if (chat) await $.store.set(`replies:${chat}`, chatKept(await $.clock.now()))
+      // The game's ding (an arrow landing is the orb's own sound), for someone who left while Claude worked.
+      if (e.reason === 'answer') play($, 'orb', 0.6, true)
       // Judged on the whole reply: a failure late in it, or lines added back, count against it.
       if (turn.tools >= 100 && !turn.failedAny) award('5.thanks')
       if (Math.max(turn.removed - turn.added, turn.deleted - turn.inserted) >= 10_000) award('0.exile')
@@ -1561,7 +1636,8 @@ export const register: Register = on => {
         if (git('revert').test(command) && isTest(command) && git('commit').test(command)) award('0.sender')
         // A revert of a revert: git titles it Revert "Revert ...".
         if (git('revert').test(command) && /Revert \\*"Revert/.test(said)) award('5.blowback')
-        if (git('push').test(command) && /\s(--force(-with-lease)?|-f)\b|\s\+\S/.test(command) && /(?:\s|:)(?:main|master)(?=\s|$)/.test(command)) award('0.frightening')
+        // Forced, and to main, in the push itself: not a flag or a branch of the command beside it.
+        if (segments(command).some(part => git('push').test(part) && /\s(?:--force(?:-with-lease)?|-f)\b|\s\+\S*\b(?:main|master)\b/.test(part) && /(?:\s|:|\+)(?:main|master)(?=\s|$)/.test(part))) award('0.frightening')
         if (/\bgh\s+pr\s+create\b/.test(command)) {
           count('prs')
           turn.shipped = true
@@ -1598,7 +1674,7 @@ export const register: Register = on => {
     const typed = e.args.trim()
     // /minecraft mute, /minecraft unmute, /minecraft volume 50, /minecraft fullscreen on|off, /minecraft hotbar on|off
     const [word, value] = typed.split(/\s+/)
-    if (word === 'parrot' || word === 'advancements' || word === 'settings' || word === 'help') {
+    if (word === 'parrot' || word === 'advancements' || word === 'stats' || word === 'settings' || word === 'help') {
       return { text: open($, word) }
     }
     // /minecraft music opens the jukebox; with pause, next, prev or stop it tells the player.
@@ -1663,7 +1739,7 @@ export const register: Register = on => {
     }
     const scene = typed === 'achievement' ? 'advancement' : typed
     const now = await $.clock.now()
-    if (!DEMOS.includes(scene)) return { text: `Moments: ${DEMOS.join(', ')}. Screens: help, advancements, music, parrot, settings. Music: music pause|next|prev|stop. Also: clear (XP only), reset all, mute, unmute, volume 0-100, fullscreen on|off, hotbar on|off.` }
+    if (!DEMOS.includes(scene)) return { text: `Moments: ${DEMOS.join(', ')}. Screens: help, advancements, stats, music, parrot, settings. Music: music pause|next|prev|stop. Also: clear (XP only), reset all, mute, unmute, volume 0-100, fullscreen on|off, hotbar on|off.` }
     if (scene === 'debug') return { text: `${JSON.stringify(diag)} · ready ${s.ready} · demo ${s.demo} · hotbar ${hotbar} · band: ${JSON.stringify(seen)} · health ${s.health} · food ${s.food} · xp ${s.xpShown}` }
     if (scene === 'villager') {
       play($, pick(['villager1', 'villager2', 'villager3']))
@@ -1685,7 +1761,7 @@ export const register: Register = on => {
       await refresh($)
       return { text: 'Showing live figures.' }
     }
-    if (!s.demo) Object.assign(s, { demo: true, ready: true, health: 17, lostFrom: 17, food: 14, starving: false, dead: false })
+    if (!s.demo) Object.assign(s, { demo: true, ready: true, health: 17, lostFrom: 17, food: 14, starving: false, dead: false, kind: s.kind || 'five_hour' })
     if (scene === 'damage') hurt($, Math.max(1, s.health - 7), now)
     if (scene === 'low') Object.assign(s, { health: 4, lostFrom: 4, dead: false })
     if (scene === 'apple') {
@@ -1717,7 +1793,7 @@ export const register: Register = on => {
     record('asked', { at: Date.now(), surface: e.surface, ready: s.ready, survey: Boolean(e.props.hasSurvey), columns: e.props.bodyColumns })
     if (e.props.hasSurvey || !s.ready) return next(e)
     const now = await $.clock.now()
-    const usage = `${s.health * 5}% of your ${limitName()} left${s.resetAt ? ` · resets ${clock(s.resetAt)}` : ''}`
+    const usage = `${usageSaid()}${s.resetAt ? ` · resets ${clock(s.resetAt)}` : ''}`
     const context = `${s.food * 5}% of context left`
     const seconds = Math.ceil((s.countdownTo - now) / 1000)
     const soon = s.countdownTo > now ? `Totem of Undying in ${seconds}s: your weekly limit is resetting` : ''

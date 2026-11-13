@@ -3,3 +3,7 @@
 .DS_Store
 __pycache__/
 node_modules/
+# The film of the mod: its music is Mojang's, its takes are large.
+tools/video/music/
+tools/video/shots/
+tools/video/*.mp4

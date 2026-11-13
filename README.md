@@ -14,7 +14,7 @@ Or inside Claude Code: `/plugin marketplace add 3eif/minecraft-claude-code`, the
 
 Start a new chat. A four-page guide opens the first time (`/minecraft help` brings it back).
 
-Needs **macOS 12+** (Apple Silicon or Intel) and the **Claude Code desktop app** for the pixel HUD; in a terminal you get a one-line HUD, and the full-screen moments and parrot still work. Nothing else to install.
+Needs **macOS 12+** (Apple Silicon or Intel) and the **Claude Code desktop app** for the pixel HUD; in a terminal you get a one-line HUD, and the full-screen moments and parrot still work. On Linux the HUD and advancements work, with toasts inside Claude Code; the screens and the parrot need a Mac. Nothing else to install.
 
 ## What you get
 
@@ -22,18 +22,18 @@ Needs **macOS 12+** (Apple Silicon or Intel) and the **Claude Code desktop app**
 
 | In the game | In Claude Code |
 |---|---|
-| **Hearts** | Your usage limit: the 5-hour or the weekly, whichever you've used more of. Each heart is 10%. |
+| **Hearts** | Your usage limit: the 5-hour, the weekly or a gateway's spend limit, whichever you've used most of. Each heart is 10%. |
 | **Hunger** | The context window, emptying as the chat fills. |
 | **XP** | Every token you use, across all chats. Level 50 is about a year of heavy use. |
 
-**The hotbar**, beside it: **Advancements**, **Jukebox**, **Parrot** and **Settings**, one click each.
+**The hotbar**, beside it: **Advancements**, **Statistics**, **Jukebox**, **Parrot** and **Settings**, one click each.
 
 **Moments**, over the whole screen, with the game's sounds:
 
 - **Damage** as your limit drains: the hearts flash and shake.
 - **The death screen** when you hit it: *"Claude was slain by the weekly limit."* In bypass-permissions mode, it's hardcore.
 - **Totem of Undying** when your weekly limit resets: once, small, quiet.
-- **Golden apple** when a chat compacts, the **level-up** chime, a **villager's "hmm"** when Claude asks you something.
+- **Golden apple** when a chat compacts, the **level-up** chime, a **villager's "hmm"** when Claude asks you something, and a **ding** when a reply finishes while you're in another app.
 
 **137 advancements** in six tabs (Building, Combat, Exploration, Survival, Habits, and The Deep Dark, which opens at 50). They start easy and run deep: the last tiers take a heavy user months, and some are secret. Each toast stays ten seconds, and hovering it shows a **Share** button; the tree shows when you earned each one and stars what's new.
 
@@ -51,7 +51,7 @@ Everything lives under `/minecraft`.
 
 | Command | What it does |
 |---|---|
-| `/minecraft advancements` · `music` · `parrot` · `settings` | Open a hotbar screen |
+| `/minecraft advancements` · `stats` · `music` · `parrot` · `settings` | Open a hotbar screen |
 | `/minecraft help` | The guide |
 | `/minecraft music pause` · `next` · `prev` · `stop` | Control the jukebox without opening it |
 | `/minecraft volume 50` · `mute` · `unmute` | Sound |

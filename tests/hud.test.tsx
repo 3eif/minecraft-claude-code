@@ -2,7 +2,7 @@ import { expect, mock, test } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
 import { ADVANCEMENTS, RENAMED, TABS } from '../hooks/advancements'
-import { blank, figure, merge, streak, tree } from '../hooks/tracker'
+import { blank, figure, isTest, merge, streak, tree } from '../hooks/tracker'
 
 // ---------- the record, without the engine ----------
 
@@ -56,6 +56,11 @@ test('the tree marks what is new and opens on its tab', async () => {
   expect(item('0.root')?.at).toBe(100)
 })
 
+test('a test run is a runner started, not its name passing by', async () => {
+  for (const run of ['bun test', 'cd app && FOO=1 npx vitest run', 'uv run pytest -x', './mvnw -q verify', 'cargo nextest run', 'xcodebuild -scheme App test']) expect(isTest(run)).toBe(true)
+  for (const other of ['cat jest.config.js', 'grep -r pytest .', 'git commit -m "fix the vitest setup"']) expect(isTest(other)).toBe(false)
+})
+
 // ---------- the band, through the engine ----------
 
 // What the host would answer, so the mod's session starts as in the app.
@@ -92,15 +97,15 @@ const BAND = {
   plugin: 'minecraft-hud',
   component: 'AbovePrompt',
   requestId: 'band',
-  props: { hasSurvey: false, isWorking: false, maxRows: 6, bodyColumns: 90, scroll: { offset: 0, bodyRows: 6 }, view: {} },
+  props: { hasSurvey: false, isCollapsed: false, isWorking: false, maxRows: 6, bodyColumns: 90, scroll: { offset: 0, bodyRows: 6 }, view: {} },
 } as const
 
-test('the desktop band draws the HUD and four hotbar slots', async ($, on) => {
+test('the desktop band draws the HUD and five hotbar slots', async ($, on) => {
   mock.clock(on, { now: Date.UTC(2029, 0, 1) })
   host(on)
   await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: false })
   const ui = await $.ui.mount({ ...BAND, surface: 'desktop' })
-  for (const slot of ['advancements', 'music', 'parrot', 'settings']) {
+  for (const slot of ['advancements', 'stats', 'music', 'parrot', 'settings']) {
     expect(await ui.find({ key: `open-${slot}` })).toBeDefined()
   }
   expect(await ui.find({ key: 'open-map' })).toBeUndefined()

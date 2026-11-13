@@ -4,6 +4,7 @@
 //
 //   MCOverlay <assetsDir> advancements <json>
 //   MCOverlay <assetsDir> options <json>
+//   MCOverlay <assetsDir> stats <json>
 //   MCOverlay <assetsDir> guide {}
 //
 // Layouts and colors follow Minecraft 1.21's AdvancementsScreen and OptionsScreen.
@@ -364,15 +365,59 @@ func slider(_ ctx: CGContext, _ r: CGRect, _ value: inout Double, _ dragging: in
     return value != before
 }
 
-/// OptionsScreen, with Music & Sounds and Accessibility behind their own buttons as in the game.
+/// StatsScreen's General list: each figure's name at the left and its count at the right,
+/// scrolled when there are more than the screen holds.
+final class StatsList {
+    let rows: [(String, String)]
+    var scroll: CGFloat = 0
+
+    init(_ data: Any?) { rows = (data as? [[String]] ?? []).compactMap { $0.count == 2 ? ($0[0], $0[1]) : nil } }
+
+    /// Draws the list under its title with Done beneath. True on the frame Done is clicked.
+    func draw(_ ctx: CGContext, w: CGFloat, h: CGFloat) -> Bool {
+        let cx = (w / 2).rounded(.down), line: CGFloat = 12
+        centered(ctx, "Statistics", cx, 14, 0xFFFFFF)
+        let list = CGRect(x: cx - 160, y: 32, width: 320, height: max(line, h - 72))
+        scroll = min(max(0, CGFloat(rows.count) * line - list.height), max(0, scroll - scrolled * 0.5))
+        ctx.saveGState(); ctx.clip(to: list)
+        for (i, row) in rows.enumerated() {
+            let y = list.minY + CGFloat(i) * line - scroll
+            if i % 2 == 0 { fill(ctx, CGRect(x: list.minX, y: y, width: list.width, height: line), 0x30000000) }
+            text(ctx, row.0, list.minX + 6, y + 2, 0xFFFFFF, shadow: true)
+            text(ctx, row.1, list.maxX - 6 - CGFloat(uiFont.width(row.1)), y + 2, 0xFFFFFF, shadow: true)
+        }
+        ctx.restoreGState()
+        return button(ctx, CGRect(x: cx - 100, y: h - 30, width: 200, height: 20), "Done")
+    }
+}
+
+/// The Statistics screen by itself, from its hotbar slot or /minecraft stats.
+final class StatsScene: Scene {
+    let list: StatsList
+    var closingAt: Double? = nil
+    var finished = false
+
+    init(_ json: String) { list = StatsList(spec(json)["rows"]) }
+
+    func draw(_ ctx: CGContext, t: Double, w: CGFloat, h: CGFloat) {
+        dim(ctx, w, h)
+        if list.draw(ctx, w: w, h: h) || keys.contains(53) || keys.contains(36), closingAt == nil { closingAt = t }
+        if let at = closingAt, t - at > 0.25 { finished = true }
+        if t > 590 { finished = true }
+        endFrame()
+    }
+}
+
+/// OptionsScreen, with Music & Sounds, Accessibility and Statistics behind their own buttons as in the game.
 final class OptionsScene: Scene {
     static let kinds: [(String, String)] = [("damage", "Damage"), ("eating", "Eating"), ("orbs", "XP Orbs"), ("xp", "Level Up"), ("advancements", "Advancements"),
-                                           ("totem", "Totem"), ("villager", "Villager"), ("clicks", "Clicks")]
+                                           ("totem", "Totem"), ("villager", "Villager"), ("clicks", "Clicks"), ("done", "Reply Finished")]
     static let motions: [(String, String)] = [("flash", "Damage Flash"), ("shake", "Low Health Shake"), ("hunger", "Hunger Shake"),
                                              ("regen", "Regeneration"), ("apple", "Eating Animation"), ("nowplaying", "Now Playing Text")]
     var volume: Double, music = jukeboxVolume, fullscreen: Bool, hotbar: Bool, updates: Bool
     var muted: Set<String>, still: Set<String>
     let level: Int
+    let stats: StatsList
     var page = "main"
     var resetXp = false
     var confirming = false
@@ -390,6 +435,7 @@ final class OptionsScene: Scene {
         muted = Set(data["muted"] as? [String] ?? [])
         still = Set(data["still"] as? [String] ?? [])
         level = data["level"] as? Int ?? 0
+        stats = StatsList(data["stats"])
     }
 
     func done(_ t: Double) {
@@ -439,6 +485,8 @@ final class OptionsScene: Scene {
             toggles(ctx, OptionsScene.motions, &still, top + 24, cx)
             centered(ctx, "Turned off, the HUD stays still for that moment.", cx, top + 104, 0xA0A0A0)
             if button(ctx, CGRect(x: cx - 100, y: top + 136, width: 200, height: 20), "Done") || back { page = "main" }
+        case "stats":
+            if stats.draw(ctx, w: w, h: h) || back { page = "main" }
         default:
             centered(ctx, "Minecraft HUD Options", cx, top - 8, 0xFFFFFF)
             if button(ctx, CGRect(x: cx - 155, y: top + 24, width: 150, height: 20), "Music & Sounds...") { page = "sounds" }
@@ -450,7 +498,8 @@ final class OptionsScene: Scene {
             if button(ctx, CGRect(x: cx - 155, y: top + 72, width: 310, height: 20), label, enabled: !resetXp) {
                 if confirming { resetXp = true } else { confirming = true }
             }
-            if button(ctx, CGRect(x: cx - 155, y: top + 96, width: 310, height: 20), "Update Alerts: \(updates ? "ON" : "OFF")") { updates.toggle() }
+            if button(ctx, CGRect(x: cx - 155, y: top + 96, width: 150, height: 20), "Update Alerts: \(updates ? "ON" : "OFF")") { updates.toggle() }
+            if button(ctx, CGRect(x: cx + 5, y: top + 96, width: 150, height: 20), "Statistics...") { page = "stats" }
             if !hotbar { centered(ctx, "Hidden. Type /minecraft hotbar on to bring it back.", cx, top + 124, 0xA0A0A0, shadow: false) }
             if button(ctx, CGRect(x: cx - 100, y: top + 144, width: 200, height: 20), "Done") || back { done(t) }
         }
@@ -492,7 +541,7 @@ final class GuideScene: Scene {
         text(ctx, level, lx, y + 5, 0x80FF20)
     }
 
-    static let slots: [(String, String)] = [("knowledge_book", "Advancements"), ("jukebox", "Jukebox"), ("parrot_spawn_egg", "Parrot"), ("comparator", "Settings")]
+    static let slots: [(String, String)] = [("knowledge_book", "Advancements"), ("paper", "Statistics"), ("jukebox", "Jukebox"), ("parrot_spawn_egg", "Parrot"), ("comparator", "Settings")]
 
     func draw(_ ctx: CGContext, t: Double, w: CGFloat, h: CGFloat) {
         dim(ctx, w, h)
@@ -597,7 +646,7 @@ final class HeroScene: Scene {
 
         // The band: its grey panel, the HUD at the left, the hotbar at the right.
         let k: CGFloat = 6, hk: CGFloat = 5, pad: CGFloat = 26
-        let slots = ["knowledge_book", "jukebox", "parrot_spawn_egg", "comparator"]
+        let slots = ["knowledge_book", "paper", "jukebox", "parrot_spawn_egg", "comparator"]
         let barW = CGFloat(20 * slots.count + 2)
         let panel = CGRect(x: left, y: 40, width: width, height: 22 * hk + 2 * pad)
         rounded(ctx, panel, 34, fill: 0xF2F2F1)
