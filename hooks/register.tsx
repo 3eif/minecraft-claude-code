@@ -1117,9 +1117,9 @@ function labelSvg(now: number, g: number) {
 // into one tile a slot so each can tell the pointer is over it.
 const SLOTS = [
   { id: 'advancements', name: 'Advancements', short: 'Tree' },
-  { id: 'stats', name: 'Statistics', short: 'Stats' },
   { id: 'music', name: 'Jukebox', short: 'Music' },
   { id: 'parrot', name: 'Parrot', short: 'Parrot' },
+  { id: 'stats', name: 'Statistics', short: 'Stats' },
   { id: 'settings', name: 'Settings', short: 'Settings' },
 ] as const
 const BAR_W = 10 + 20 * SLOTS.length

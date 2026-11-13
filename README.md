@@ -26,7 +26,7 @@ Needs **macOS 12+** (Apple Silicon or Intel) and the **Claude Code desktop app**
 | **Hunger** | The context window, emptying as the chat fills. |
 | **XP** | Every token you use, across all chats. Level 50 is about a year of heavy use. |
 
-**The hotbar**, beside it: **Advancements**, **Statistics**, **Jukebox**, **Parrot** and **Settings**, one click each.
+**The hotbar**, beside it: **Advancements**, **Jukebox**, **Parrot**, **Statistics** and **Settings**, one click each.
 
 **Moments**, over the whole screen, with the game's sounds:
 
@@ -51,7 +51,7 @@ Everything lives under `/minecraft`.
 
 | Command | What it does |
 |---|---|
-| `/minecraft advancements` · `stats` · `music` · `parrot` · `settings` | Open a hotbar screen |
+| `/minecraft advancements` · `music` · `parrot` · `stats` · `settings` | Open a hotbar screen |
 | `/minecraft help` | The guide |
 | `/minecraft music pause` · `next` · `prev` · `stop` | Control the jukebox without opening it |
 | `/minecraft volume 50` · `mute` · `unmute` | Sound |

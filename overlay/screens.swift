@@ -541,7 +541,7 @@ final class GuideScene: Scene {
         text(ctx, level, lx, y + 5, 0x80FF20)
     }
 
-    static let slots: [(String, String)] = [("knowledge_book", "Advancements"), ("paper", "Statistics"), ("jukebox", "Jukebox"), ("parrot_spawn_egg", "Parrot"), ("comparator", "Settings")]
+    static let slots: [(String, String)] = [("knowledge_book", "Advancements"), ("jukebox", "Jukebox"), ("parrot_spawn_egg", "Parrot"), ("paper", "Statistics"), ("comparator", "Settings")]
 
     func draw(_ ctx: CGContext, t: Double, w: CGFloat, h: CGFloat) {
         dim(ctx, w, h)
@@ -646,7 +646,7 @@ final class HeroScene: Scene {
 
         // The band: its grey panel, the HUD at the left, the hotbar at the right.
         let k: CGFloat = 6, hk: CGFloat = 5, pad: CGFloat = 26
-        let slots = ["knowledge_book", "paper", "jukebox", "parrot_spawn_egg", "comparator"]
+        let slots = ["knowledge_book", "jukebox", "parrot_spawn_egg", "paper", "comparator"]
         let barW = CGFloat(20 * slots.count + 2)
         let panel = CGRect(x: left, y: 40, width: width, height: 22 * hk + 2 * pad)
         rounded(ctx, panel, 34, fill: 0xF2F2F1)
