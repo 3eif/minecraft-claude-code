@@ -1,6 +1,6 @@
 import type { EngineInterface, Register, SessionContextUsage, SessionRateLimit } from 'claude-code'
 
-import { ADVANCEMENTS, RENAMED } from './advancements'
+import { ADVANCEMENTS } from './advancements'
 import { HOTBAR, ICONS } from './hotbar'
 import { DIGITS, PIX } from './pixels'
 import { GLYPH, GLYPH_W, SPR, XP_BG, XP_FILL } from './sprites'
@@ -367,20 +367,25 @@ async function syncShared($: EngineInterface) {
   if (changed) redraw($)
 }
 
-// Progress since the tabs were regrouped is kept under its own key: a chat still
-// running the version before writes the old one, with the old ids, and is left to it.
-// The first read with nothing under the new key takes the old one up once.
+// Progress since the tabs were regrouped is kept under its own key.
 const PROGRESS = 'progress2'
-async function storedProgress($: EngineInterface) {
-  const now = (await $.store.get(PROGRESS)) as Progress | undefined
+const storedProgress = async ($: EngineInterface) => (await $.store.get(PROGRESS)) as Progress | undefined
+
+// What a version before the regrouping saved, under the old key and with the old
+// ids, is taken up once as a chat starts and then removed, so no later read looks
+// for it: all of it into an empty record, its advancements alone into one that has
+// counted since.
+async function takeUpOld($: EngineInterface) {
   const old = (await $.store.get('progress')) as Progress | undefined
-  if (!now || !old) return now ?? old
-  const earned = { ...now.earned }
-  for (const [id, at] of Object.entries(old.earned ?? {})) {
-    const to = RENAMED[id]
-    if (to) earned[to] = Math.min(earned[to] ?? at, at)
-  }
-  return { ...now, earned }
+  if (!old) return
+  await withLock($, 'progress', async () => {
+    const read = merge(old, blank())
+    const now = await storedProgress($)
+    const earned = { ...now?.earned }
+    for (const [id, at] of Object.entries(read.earned)) earned[id] = Math.min(earned[id] ?? at, at)
+    await $.store.set(PROGRESS, now ? { ...now, earned } : read)
+    await $.store.delete('progress')
+  }, true)
 }
 
 // ---------- the backup ----------
@@ -422,19 +427,21 @@ async function restore($: EngineInterface) {
   return `Progress restored from your backup: ${Object.keys(progress.earned).length} advancements, level ${levelOf(units).level}.`
 }
 
-// Counts are saved a few seconds after they change, in one write, instead of at
-// every event: the store's lock costs two small processes. An advancement just
-// earned is saved at once, so its toast is not late, and a chat that ends saves
-// what it has first.
+// Counts are saved half a minute after they change, in one write, instead of at
+// every event: the store's lock costs two small processes, and a long reply would
+// pay them every few seconds. An advancement just earned is saved at once, so its
+// toast is not late; so is a reply that has ended (`now`), as the app may stop an
+// idle chat's process without a word; and a chat that ends saves what it has first.
+const SAVE_AFTER = 30_000
 let settleTimer: Timer | undefined
-function settleSoon($: EngineInterface) {
-  if (pending.length) {
+function settleSoon($: EngineInterface, now = false) {
+  if (pending.length || now) {
     settleTimer?.cancel()
     settleTimer = undefined
     void settle($)
     return
   }
-  settleTimer ??= $.clock.after(3000, () => {
+  settleTimer ??= $.clock.after(SAVE_AFTER, () => {
     settleTimer = undefined
     void settle($)
   })
@@ -731,7 +738,13 @@ async function howDid($: EngineInterface) {
   if (running >= 3) award('3.howdid')
 }
 
-async function applyUsage($: EngineInterface, context: SessionContextUsage, limits: readonly SessionRateLimit[]) {
+// What the band shows of `s`: the two percentages move many times within one
+// half-heart, and are drawn only as the hearts and the hunger they come to.
+const shown = () => JSON.stringify({ ...s, contextPct: 0, limitPct: 0 })
+
+// `was` is the band as last drawn: every open chat reads its usage twice a minute,
+// and one where nothing moved has nothing to draw again.
+async function applyUsage($: EngineInterface, context: SessionContextUsage, limits: readonly SessionRateLimit[], was = shown()) {
   if (s.demo) return
   const now = await $.clock.now()
   const plan = limits.filter(l => l.kind in LIMITS)
@@ -798,14 +811,15 @@ async function applyUsage($: EngineInterface, context: SessionContextUsage, limi
     s.dead = percent >= 100
   }
   s.ready = true
-  redraw($)
+  if (shown() !== was) redraw($)
 }
 
 async function refresh($: EngineInterface) {
+  const was = shown()
   const usage = await $.session.usage()
   const theme = (await $.config.list()).find(row => row.key === 'theme')?.value
   s.light = typeof theme === 'string' && /light/i.test(theme)
-  await applyUsage($, usage.context, usage.rateLimits)
+  await applyUsage($, usage.context, usage.rateLimits, was)
 }
 
 // ---------- drawing ----------
@@ -1367,6 +1381,7 @@ export const register: Register = on => {
     const restored = await restore($).catch(() => '')
     if (restored) later($, 4000, () => $.ui.toast(restored))
     useChatKept((await $.store.get(`replies:${chat}`)) as Parameters<typeof useChatKept>[0])
+    await takeUpOld($)
     saved = merge(await storedProgress($), blank())
     const held = (await $.store.get('xp2')) as { units?: number } | undefined
     const old = (await $.store.get('xp')) as { xp?: number } | undefined
@@ -1464,7 +1479,7 @@ export const register: Register = on => {
       count(`tokensOn:${day(await $.clock.now())}`, tokens / 1000)
       await gainXP($, tokens)
     }
-    settleSoon($)
+    settleSoon($, !e.agentId)
     syncSoon($)
 
     return next(e)
@@ -1759,6 +1774,7 @@ export const register: Register = on => {
       s.dead = false
       s.starving = false
       await refresh($)
+      redraw($)
       return { text: 'Showing live figures.' }
     }
     if (!s.demo) Object.assign(s, { demo: true, ready: true, health: 17, lostFrom: 17, food: 14, starving: false, dead: false, kind: s.kind || 'five_hour' })
