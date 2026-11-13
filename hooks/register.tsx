@@ -695,8 +695,8 @@ function countdown($: EngineInterface, to: number) {
 // The Totem of Undying, when the weekly limit resets: once, in whichever chat
 // gets there first, quietly, and never over your typing.
 const TOTEM_LOUDNESS = 0.15
-// A hotbar slot's click; the screens' own buttons click at about the same.
-const CLICK = 0.3
+// A hotbar slot's click, at the level the helper clicks its own buttons, tabs and tracks.
+const CLICK = 0.12
 async function totemMoment($: EngineInterface, key: string) {
   const now = await $.clock.now()
   if (now - s.lastEdit < 3000) {
