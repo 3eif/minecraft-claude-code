@@ -7,10 +7,10 @@
 ## Install
 
 ```bash
-claude plugin marketplace add 3eif/minecraft-claude-code && claude plugin install minecraft-hud@minecraft-hud
+claude plugin install minecraft-hud --marketplace 3eif/minecraft-claude-code
 ```
 
-Or inside Claude Code: `/plugin marketplace add 3eif/minecraft-claude-code`, then `/plugin install minecraft-hud@minecraft-hud`.
+Or inside Claude Code: `/plugin install minecraft-hud --marketplace 3eif/minecraft-claude-code`.
 
 Start a new chat. A four-page guide opens the first time (`/minecraft help` brings it back).
 
@@ -28,7 +28,7 @@ Needs **macOS 12+** (Apple Silicon or Intel) and the **Claude Code desktop app**
 
 **The hotbar**, beside it: **Advancements**, **Jukebox**, **Parrot**, **Statistics** and **Settings**, one click each.
 
-**Tool icons**, in the desktop app: a pickaxe beside each command Claude runs, a map beside each file it reads, a book and quill beside each edit, and so on. Settings turns them off.
+**Tool icons**, in the desktop app: a pickaxe beside each command Claude runs, a map beside each file it reads, a book and quill beside each edit, and so on. They are off until you turn them on in Settings.
 
 **Moments**, over the whole screen, with the game's sounds:
 

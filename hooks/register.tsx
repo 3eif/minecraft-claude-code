@@ -56,7 +56,7 @@ let volume = 1
 let fullscreen = true
 let hotbar = true
 // An item beside each tool call in the desktop app.
-let toolIcons = true
+let toolIcons = false
 let updates = true
 // Kinds of sound turned off in Music & Sounds, and moments turned off in
 // Accessibility (the HUD stays still for those).
