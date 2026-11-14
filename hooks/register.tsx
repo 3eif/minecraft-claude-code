@@ -2,6 +2,7 @@ import type { EngineInterface, Register, SessionContextUsage, SessionRateLimit }
 
 import { ADVANCEMENTS } from './advancements'
 import { HOTBAR, ICONS } from './hotbar'
+import { registerIcons } from './icons'
 import { DIGITS, PIX } from './pixels'
 import { GLYPH, GLYPH_W, SPR, XP_BG, XP_FILL } from './sprites'
 import { blank, day, due, isTest, merge, segments, stats, testKey, tree, type Progress } from './tracker'
@@ -54,6 +55,8 @@ let sounds = true
 let volume = 1
 let fullscreen = true
 let hotbar = true
+// An item beside each tool call in the desktop app.
+let toolIcons = true
 let updates = true
 // Kinds of sound turned off in Music & Sounds, and moments turned off in
 // Accessibility (the HUD stays still for those).
@@ -65,7 +68,7 @@ const soundKind = (name: string) =>
   /^hit/.test(name) ? 'damage' : /^eat|^burp/.test(name) ? 'eating' : name === 'orb' ? 'orbs' : name === 'levelup' ? 'xp'
     : /^toast|^challenge/.test(name) ? 'advancements' : name === 'use_totem' ? 'totem' : /^villager/.test(name) ? 'villager'
       : name === 'click' ? 'clicks' : name
-const prefs = () => ({ sounds, volume, fullscreen, hotbar, updates, muted, still, orbsChosen: true })
+const prefs = () => ({ sounds, volume, fullscreen, hotbar, updates, toolIcons, muted, still, orbsChosen: true })
 type Prefs = Partial<ReturnType<typeof prefs>>
 function usePrefs(kept: Prefs | undefined) {
   if (Array.isArray(kept?.muted)) muted = kept.muted
@@ -77,6 +80,7 @@ function usePrefs(kept: Prefs | undefined) {
   if (typeof kept?.fullscreen === 'boolean') fullscreen = kept.fullscreen
   if (typeof kept?.hotbar === 'boolean') hotbar = kept.hotbar
   if (typeof kept?.updates === 'boolean') updates = kept.updates
+  if (typeof kept?.toolIcons === 'boolean') toolIcons = kept.toolIcons
 }
 let timers: Timer[] = []
 // Whether this chat is in bypass permissions mode, as its last prompt said: /minecraft hardcore previews the look alone.
@@ -1300,6 +1304,7 @@ async function showOptions($: EngineInterface) {
   fullscreen = chose.fullscreen !== false
   hotbar = chose.hotbar !== false
   updates = chose.updates !== false
+  toolIcons = chose.toolIcons !== false
   const names = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [])
   muted = names(chose.muted)
   still = names(chose.still)
@@ -1361,6 +1366,7 @@ const SCREENS = ['help', 'parrot', 'advancements', 'stats', 'music', 'settings',
 
 // Sounds, volume and full-screen moments are set in the game's own Settings screen, kept in the store.
 export const register: Register = on => {
+  registerIcons(on, () => toolIcons)
 
   on('session.start', async ($, e, next) => {
     for (const timer of timers) timer.cancel()

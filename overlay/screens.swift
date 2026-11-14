@@ -414,7 +414,7 @@ final class OptionsScene: Scene {
                                            ("totem", "Totem"), ("villager", "Villager"), ("clicks", "Clicks"), ("done", "Reply Finished")]
     static let motions: [(String, String)] = [("flash", "Damage Flash"), ("shake", "Low Health Shake"), ("hunger", "Hunger Shake"),
                                              ("regen", "Regeneration"), ("apple", "Eating Animation"), ("nowplaying", "Now Playing Text")]
-    var volume: Double, music = jukeboxVolume, fullscreen: Bool, hotbar: Bool, updates: Bool
+    var volume: Double, music = jukeboxVolume, fullscreen: Bool, hotbar: Bool, updates: Bool, toolIcons: Bool
     var muted: Set<String>, still: Set<String>
     let level: Int
     let stats: StatsList
@@ -432,6 +432,7 @@ final class OptionsScene: Scene {
         fullscreen = data["fullscreen"] as? Bool ?? true
         hotbar = data["hotbar"] as? Bool ?? true
         updates = data["updates"] as? Bool ?? true
+        toolIcons = data["toolIcons"] as? Bool ?? true
         muted = Set(data["muted"] as? [String] ?? [])
         still = Set(data["still"] as? [String] ?? [])
         level = data["level"] as? Int ?? 0
@@ -447,7 +448,7 @@ final class OptionsScene: Scene {
     /// choices are the screen's answer however it closes (Done, Escape, another app).
     var said: NSDictionary? = nil
     func apply() {
-        let now: NSDictionary = ["sounds": volume > 0, "volume": volume, "fullscreen": fullscreen, "hotbar": hotbar, "updates": updates, "resetXp": resetXp,
+        let now: NSDictionary = ["sounds": volume > 0, "volume": volume, "fullscreen": fullscreen, "hotbar": hotbar, "updates": updates, "toolIcons": toolIcons, "resetXp": resetXp,
                                  "muted": muted.sorted(), "still": still.sorted()]
         guard now != said else { return }
         said = now
@@ -499,9 +500,11 @@ final class OptionsScene: Scene {
                 if confirming { resetXp = true } else { confirming = true }
             }
             if button(ctx, CGRect(x: cx - 155, y: top + 96, width: 150, height: 20), "Update Alerts: \(updates ? "ON" : "OFF")") { updates.toggle() }
-            if button(ctx, CGRect(x: cx + 5, y: top + 96, width: 150, height: 20), "Statistics...") { page = "stats" }
-            if !hotbar { centered(ctx, "Hidden. Type /minecraft hotbar on to bring it back.", cx, top + 124, 0xA0A0A0, shadow: false) }
-            if button(ctx, CGRect(x: cx - 100, y: top + 144, width: 200, height: 20), "Done") || back { done(t) }
+            // Items beside tool calls in the desktop app.
+            if button(ctx, CGRect(x: cx + 5, y: top + 96, width: 150, height: 20), "Tool Icons: \(toolIcons ? "ON" : "OFF")") { toolIcons.toggle() }
+            if button(ctx, CGRect(x: cx - 155, y: top + 120, width: 310, height: 20), "Statistics...") { page = "stats" }
+            if !hotbar { centered(ctx, "Hidden. Type /minecraft hotbar on to bring it back.", cx, top + 148, 0xA0A0A0, shadow: false) }
+            if button(ctx, CGRect(x: cx - 100, y: top + 168, width: 200, height: 20), "Done") || back { done(t) }
         }
         apply()
         if let at = closingAt, t - at > 0.25 { finished = true }

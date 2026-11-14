@@ -14,7 +14,7 @@ Or inside Claude Code: `/plugin marketplace add 3eif/minecraft-claude-code`, the
 
 Start a new chat. A four-page guide opens the first time (`/minecraft help` brings it back).
 
-Needs **macOS 12+** (Apple Silicon or Intel) and the **Claude Code desktop app** for the pixel HUD; in a terminal you get a one-line HUD, and the full-screen moments and parrot still work. On Linux the HUD and advancements work, with toasts inside Claude Code; the screens and the parrot need a Mac. Nothing else to install.
+Needs **macOS 12+** (Apple Silicon or Intel) and the **Claude Code desktop app** for the pixel HUD; in a terminal you get a one-line HUD, and the full-screen moments and parrot still work. On Linux the HUD and advancements work, with toasts inside Claude Code; the screens and the parrot need a Mac. Windows is untested. Nothing else to install.
 
 ## What you get
 
@@ -27,6 +27,8 @@ Needs **macOS 12+** (Apple Silicon or Intel) and the **Claude Code desktop app**
 | **XP** | Every token you use, across all chats. Level 50 is about a year of heavy use. |
 
 **The hotbar**, beside it: **Advancements**, **Jukebox**, **Parrot**, **Statistics** and **Settings**, one click each.
+
+**Tool icons**, in the desktop app: a pickaxe beside each command Claude runs, a map beside each file it reads, a book and quill beside each edit, and so on. Settings turns them off.
 
 **Moments**, over the whole screen, with the game's sounds:
 
