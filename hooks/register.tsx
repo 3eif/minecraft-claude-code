@@ -1458,7 +1458,7 @@ export const register: Register = on => {
       if (++chatTurns >= 200) award('4.serious')
       if (chat) await $.store.set(`replies:${chat}`, chatKept(await $.clock.now()))
       // The game's ding (an arrow landing is the orb's own sound), for someone who left while Claude worked.
-      if (e.reason === 'answer') play($, 'orb', 0.6, true)
+      if (e.reason === 'answer') play($, 'orb', 0.25, true)
       // Judged on the whole reply: a failure late in it, or lines added back, count against it.
       if (turn.tools >= 100 && !turn.failedAny) award('5.thanks')
       if (Math.max(turn.removed - turn.added, turn.deleted - turn.inserted) >= 10_000) award('0.exile')
