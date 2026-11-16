@@ -5,7 +5,7 @@ import { HOTBAR, ICONS } from './hotbar'
 import { registerIcons } from './icons'
 import { DIGITS, PIX } from './pixels'
 import { GLYPH, GLYPH_W, SPR, XP_BG, XP_FILL } from './sprites'
-import { blank, day, due, isTest, merge, segments, stats, testKey, tree, type Progress } from './tracker'
+import { blank, day, due, isSearch, isTest, merge, segments, stats, testKey, tree, type Progress } from './tracker'
 
 // Minecraft's survival HUD above the prompt.
 //   hearts  = the usage limit that will stop you first (5-hour or weekly)
@@ -1614,6 +1614,8 @@ export const register: Register = on => {
       const command = typeof input.command === 'string' ? input.command : ''
       count('commands')
       if (failed) count('failures')
+      // A search that finds nothing exits 1 and reads as failed; it still searched.
+      if (isSearch(command)) count('searches')
       chatRun.clean = failed ? 0 : chatRun.clean + 1
       if (chatRun.clean >= 1000) award('2.lock')
       const said = JSON.stringify(ran)

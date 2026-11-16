@@ -149,6 +149,11 @@ const RUNNER = /^(?:\w+=\S*\s+|(?:sudo|time|env|npx|bunx|pnpx|timeout\s+\S+|(?:p
 /** A command line's commands, one for each side of a `&&`, `;` or pipe, without what runs them. */
 export const segments = (command: string) => command.split(/&&|\|\||[;|\n]/).map(part => part.trim().replace(/^\(\s*/, '').replace(RUNNER, ''))
 
+// A search of the code from the shell, which is how Claude Code searches where it has no Grep or Glob tool. Only the
+// first program of a pipeline: a grep reading another command's output is filtering it, not searching the code.
+const SEARCH = /^(?:grep|egrep|fgrep|rg|ag|ack|find|fd|git\s+grep)\b/
+export const isSearch = (command: string) => command.split(/&&|\|\||[;\n]/).some(chain => SEARCH.test(segments(chain.split('|')[0]!)[0]!))
+
 // A test runner started, not its name passing by in a path or a search.
 const TEST =
   /^(?:(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?test\b|(?:vitest|jest|pytest|unittest|rspec|phpunit|ctest|tox|nox)\b|(?:cargo|go|swift|mix|dotnet|gradle|make|deno|flutter|dart|rails|rake)\s+test\b|cargo\s+nextest\b|playwright\s+test\b|(?:\.\/)?mvnw?\s+(?:\S+\s+)*(?:test|verify)\b|xcodebuild\b.*\btest\b|(?:\.\/)?gradlew\s+(?:\S+\s+)*test\b)/
